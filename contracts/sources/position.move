@@ -8,6 +8,7 @@
 /// - LoanPosition has `key` + `store` for ownership and secondary market trading
 /// - MatchReceipt has NO abilities (Hot Potato pattern) — must be consumed by settle()
 /// - Both lender and borrower receive distinct LoanPosition NFTs upon matching
+/// - `loan_id` links both positions to the same loan and the vault's collateral
 ///
 /// # Dependencies
 /// - sui::object (UID, ID)
@@ -36,16 +37,16 @@ const STATUS_ACTIVE: u8 = 0;
 /// Position status: Loan has been repaid by borrower
 const STATUS_REPAID: u8 = 1;
 /// Position status: Collateral was liquidated due to undercollateralization
-const STATUS_LIQUIDATED: u8 = 2;
+const _STATUS_LIQUIDATED: u8 = 2;
 /// Position status: Loan matured without repayment
-const STATUS_DEFAULTED: u8 = 3;
+const _STATUS_DEFAULTED: u8 = 3;
 
 // ============================================================
 // Error Constants
 // ============================================================
 
 /// Abort: Invalid position side (must be 0 or 1)
-const EInvalidSide: u64 = 0;
+const _EInvalidSide: u64 = 0;
 /// Abort: Invalid position status transition
 const EInvalidStatus: u64 = 1;
 
@@ -72,6 +73,10 @@ const EInvalidStatus: u64 = 1;
 /// - `store`: Can be stored in other objects and traded on marketplaces
 public struct LoanPosition has key, store {
     id: UID,
+    /// Unique loan identifier shared between lender and borrower positions.
+    /// Equal to the lender's LoanPosition object ID.
+    /// Used as the key for collateral lookup in the CollateralVault.
+    loan_id: ID,
     /// The side of this position holder: ORDER_SIDE_LEND (0) or ORDER_SIDE_BORROW (1)
     side: u8,
     /// The lender's address
@@ -114,7 +119,8 @@ public struct LoanPosition has key, store {
 /// # PTB Flow
 /// ```
 /// Command 1: market::match_orders(book, ...) -> MatchReceipt
-/// Command 2: market::settle(receipt, clock, ctx) -> transfers LoanPositions
+/// Command 2: market::settle(receipt, collateral, book, vault, clock, ctx)
+///            → transfers Coin<BASE> to borrower, locks Coin<COLLATERAL> in vault
 /// ```
 ///
 /// # Security Guarantee
@@ -151,6 +157,7 @@ public struct MatchReceipt {
 /// Used by off-chain indexers to track active loans.
 public struct LoanCreated has copy, drop {
     position_id: ID,
+    loan_id: ID,
     side: u8,
     lender: address,
     borrower: address,
@@ -213,13 +220,9 @@ public(package) fun new_match_receipt(
 /// This is the ONLY function that can destroy a MatchReceipt,
 /// enforcing the Hot Potato pattern for atomic settlement.
 ///
-/// # Phase 1 (Current)
-/// Creates LoanPosition NFTs without actual coin transfers.
-/// Positions record the loan terms for tracking purposes.
-///
-/// # Phase 2 (TODO)
-/// Will accept `Coin<BASE>` and `Coin<COLLATERAL>` parameters.
-/// Will escrow collateral in a Vault and transfer principal to borrower.
+/// Creates linked lender and borrower position NFTs sharing the same `loan_id`.
+/// The `loan_id` is the lender position's object ID, used as the key
+/// for collateral lookup in the CollateralVault.
 ///
 /// # Parameters
 /// - `receipt`: The MatchReceipt to consume (Hot Potato)
@@ -228,9 +231,6 @@ public(package) fun new_match_receipt(
 ///
 /// # Returns
 /// Tuple of (lender_position, borrower_position) LoanPosition NFTs
-///
-/// # Abort Conditions
-/// - None in Phase 1 (all validation happens in match_orders)
 public(package) fun settle_receipt(
     receipt: MatchReceipt,
     current_time: u64,
@@ -254,9 +254,15 @@ public(package) fun settle_receipt(
     // Duration is in seconds, clock timestamps are in milliseconds
     let maturity_time = current_time + (duration * 1000);
 
+    // Create lender UID first to derive the loan_id
+    // The loan_id is shared between both positions and used as vault key
+    let lender_uid = object::new(ctx);
+    let loan_id = object::uid_to_inner(&lender_uid);
+
     // Create lender position (the "bond")
     let lender_position = LoanPosition {
-        id: object::new(ctx),
+        id: lender_uid,
+        loan_id,
         side: ORDER_SIDE_LEND,
         lender,
         borrower,
@@ -273,6 +279,7 @@ public(package) fun settle_receipt(
     // Create borrower position (the "obligation")
     let borrower_position = LoanPosition {
         id: object::new(ctx),
+        loan_id,
         side: ORDER_SIDE_BORROW,
         lender,
         borrower,
@@ -289,6 +296,7 @@ public(package) fun settle_receipt(
     // Emit events for off-chain indexing
     event::emit(LoanCreated {
         position_id: object::id(&lender_position),
+        loan_id,
         side: ORDER_SIDE_LEND,
         lender,
         borrower,
@@ -302,6 +310,7 @@ public(package) fun settle_receipt(
 
     event::emit(LoanCreated {
         position_id: object::id(&borrower_position),
+        loan_id,
         side: ORDER_SIDE_BORROW,
         lender,
         borrower,
@@ -316,10 +325,29 @@ public(package) fun settle_receipt(
     (lender_position, borrower_position)
 }
 
+/// Updates the status of a LoanPosition.
+///
+/// Only callable within the yume package. Used by the repay/liquidate
+/// functions to transition position status.
+///
+/// # Valid Transitions
+/// - Active (0) → Repaid (1)
+/// - Active (0) → Liquidated (2)
+/// - Active (0) → Defaulted (3)
+///
+/// # Abort Conditions
+/// - `EInvalidStatus` (1): Position is not currently active
+public(package) fun set_status(position: &mut LoanPosition, new_status: u8) {
+    assert!(position.status == STATUS_ACTIVE, EInvalidStatus);
+    position.status = new_status;
+}
+
 // ============================================================
 // Accessor Functions — LoanPosition
 // ============================================================
 
+/// Returns the loan_id (shared between lender and borrower positions)
+public fun loan_id(position: &LoanPosition): ID { position.loan_id }
 /// Returns the side of the position (0 = Lend, 1 = Borrow)
 public fun side(position: &LoanPosition): u8 { position.side }
 /// Returns the lender's address
@@ -347,6 +375,10 @@ public fun book_id(position: &LoanPosition): ID { position.book_id }
 // Accessor Functions — MatchReceipt (Package-Internal)
 // ============================================================
 
+/// Returns the lend order ID from the receipt
+public(package) fun receipt_lend_order_id(receipt: &MatchReceipt): u64 {
+    receipt.lend_order_id
+}
 /// Returns the matched principal amount from the receipt
 public(package) fun receipt_matched_amount(receipt: &MatchReceipt): u64 {
     receipt.matched_amount
@@ -362,4 +394,8 @@ public(package) fun receipt_lender(receipt: &MatchReceipt): address {
 /// Returns the borrower's address from the receipt
 public(package) fun receipt_borrower(receipt: &MatchReceipt): address {
     receipt.borrower
+}
+/// Returns the rate from the receipt
+public(package) fun receipt_rate(receipt: &MatchReceipt): u64 {
+    receipt.rate
 }

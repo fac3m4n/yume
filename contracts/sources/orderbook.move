@@ -25,6 +25,8 @@ module yume::orderbook;
 
 use sui::object::{Self, UID, ID};
 use sui::table::{Self, Table};
+use sui::balance::Balance;
+use sui::dynamic_field;
 use sui::tx_context::TxContext;
 use sui::event;
 
@@ -98,6 +100,14 @@ const EInvalidRiskTier: u64 = 110;
 // ============================================================
 // Structs
 // ============================================================
+
+/// Dynamic field key for storing lender deposits on the OrderBook.
+/// When a lender places an order, their `Coin<BASE>` is converted to
+/// `Balance<BASE>` and stored as a dynamic field keyed by order_id.
+/// This avoids making BASE non-phantom in the OrderBook struct.
+public struct DepositKey has copy, drop, store {
+    order_id: u64,
+}
 
 /// An order in the order book.
 ///
@@ -557,3 +567,56 @@ public fun order_rate(order: &Order): u64 { order.rate }
 public fun order_timestamp(order: &Order): u64 { order.timestamp }
 /// Returns whether the order is still active
 public fun order_is_active(order: &Order): bool { order.is_active }
+
+// ============================================================
+// Deposit Management (Dynamic Fields)
+// ============================================================
+
+/// Stores a lender's deposit as a dynamic field on the OrderBook.
+/// Called when a lender places an order with their Coin<BASE>.
+///
+/// The deposit is stored as `Balance<BASE>` keyed by `DepositKey { order_id }`.
+/// This keeps the OrderBook's BASE type parameter phantom.
+///
+/// # Parameters
+/// - `book`: Mutable reference to the OrderBook
+/// - `order_id`: The order ID to key the deposit by
+/// - `deposit`: The lender's balance to store
+public(package) fun store_deposit<BASE, COLLATERAL>(
+    book: &mut OrderBook<BASE, COLLATERAL>,
+    order_id: u64,
+    deposit: Balance<BASE>,
+) {
+    dynamic_field::add(&mut book.id, DepositKey { order_id }, deposit);
+}
+
+/// Checks if a deposit exists for a given order.
+///
+/// # Returns
+/// `true` if a deposit is stored for this order_id
+public fun has_deposit<BASE, COLLATERAL>(
+    book: &OrderBook<BASE, COLLATERAL>,
+    order_id: u64,
+): bool {
+    dynamic_field::exists_(&book.id, DepositKey { order_id })
+}
+
+/// Withdraws a lender's deposit from the OrderBook.
+/// Called during settlement (to transfer principal to borrower)
+/// or during cancellation (to refund the lender).
+///
+/// # Parameters
+/// - `book`: Mutable reference to the OrderBook
+/// - `order_id`: The order ID whose deposit to withdraw
+///
+/// # Returns
+/// The `Balance<BASE>` that was deposited by the lender
+///
+/// # Abort Conditions
+/// - Aborts if no dynamic field exists for this order_id
+public(package) fun withdraw_deposit<BASE, COLLATERAL>(
+    book: &mut OrderBook<BASE, COLLATERAL>,
+    order_id: u64,
+): Balance<BASE> {
+    dynamic_field::remove(&mut book.id, DepositKey { order_id })
+}
