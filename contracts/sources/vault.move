@@ -27,6 +27,8 @@ use sui::event;
 
 /// Abort: No collateral found for the given loan_id
 const ECollateralNotFound: u64 = 200;
+/// Abort: No loan info found for the given loan_id
+const ELoanInfoNotFound: u64 = 201;
 
 // ============================================================
 // Structs
@@ -37,6 +39,31 @@ const ECollateralNotFound: u64 = 200;
 /// keyed by the loan_id (which is the lender's LoanPosition object ID).
 public struct CollateralKey has copy, drop, store {
     loan_id: ID,
+}
+
+/// Dynamic field key for storing loan metadata.
+/// Stored alongside collateral so liquidators can check maturity
+/// without needing access to owned LoanPosition objects.
+public struct LoanInfoKey has copy, drop, store {
+    loan_id: ID,
+}
+
+/// Loan metadata stored in the vault for liquidation checks.
+/// This allows third-party liquidators to verify loan expiry
+/// using only the shared CollateralVault (no owned objects needed).
+public struct LoanInfo has store, drop, copy {
+    /// The lender's address (receives collateral on liquidation)
+    lender: address,
+    /// The borrower's address (receives surplus on liquidation)
+    borrower: address,
+    /// Principal amount in base asset units
+    principal: u64,
+    /// Interest rate in basis points
+    rate: u64,
+    /// Clock timestamp (ms) when the loan matures
+    maturity_time: u64,
+    /// Collateral amount locked
+    collateral_amount: u64,
 }
 
 /// Holds all collateral for active loans in a specific lending market.
@@ -192,3 +219,84 @@ public fun active_loans<COLLATERAL>(vault: &CollateralVault<COLLATERAL>): u64 {
 public fun total_locked<COLLATERAL>(vault: &CollateralVault<COLLATERAL>): u64 {
     vault.total_locked
 }
+
+// ============================================================
+// Loan Info Management (for Liquidation)
+// ============================================================
+
+/// Stores loan metadata alongside collateral.
+/// Called during settlement so liquidators can check loan terms
+/// without needing owned position objects.
+public(package) fun store_loan_info<COLLATERAL>(
+    vault: &mut CollateralVault<COLLATERAL>,
+    loan_id: ID,
+    lender: address,
+    borrower: address,
+    principal: u64,
+    rate: u64,
+    maturity_time: u64,
+    collateral_amount: u64,
+) {
+    let info = LoanInfo {
+        lender,
+        borrower,
+        principal,
+        rate,
+        maturity_time,
+        collateral_amount,
+    };
+    dynamic_field::add(&mut vault.id, LoanInfoKey { loan_id }, info);
+}
+
+/// Reads loan metadata from the vault.
+/// Used by the liquidation module to check maturity and addresses.
+///
+/// # Abort Conditions
+/// - `ELoanInfoNotFound` (201): No loan info exists for this loan_id
+public fun get_loan_info<COLLATERAL>(
+    vault: &CollateralVault<COLLATERAL>,
+    loan_id: ID,
+): LoanInfo {
+    assert!(
+        dynamic_field::exists_(&vault.id, LoanInfoKey { loan_id }),
+        ELoanInfoNotFound,
+    );
+    *dynamic_field::borrow(&vault.id, LoanInfoKey { loan_id })
+}
+
+/// Removes loan metadata from the vault.
+/// Called after repayment or liquidation.
+public(package) fun remove_loan_info<COLLATERAL>(
+    vault: &mut CollateralVault<COLLATERAL>,
+    loan_id: ID,
+) {
+    let _info: LoanInfo = dynamic_field::remove(
+        &mut vault.id,
+        LoanInfoKey { loan_id },
+    );
+}
+
+/// Checks if loan info exists for a given loan_id.
+public fun has_loan_info<COLLATERAL>(
+    vault: &CollateralVault<COLLATERAL>,
+    loan_id: ID,
+): bool {
+    dynamic_field::exists_(&vault.id, LoanInfoKey { loan_id })
+}
+
+// ============================================================
+// LoanInfo Accessor Functions
+// ============================================================
+
+/// Returns the lender address from loan info
+public fun loan_info_lender(info: &LoanInfo): address { info.lender }
+/// Returns the borrower address from loan info
+public fun loan_info_borrower(info: &LoanInfo): address { info.borrower }
+/// Returns the principal amount from loan info
+public fun loan_info_principal(info: &LoanInfo): u64 { info.principal }
+/// Returns the interest rate from loan info
+public fun loan_info_rate(info: &LoanInfo): u64 { info.rate }
+/// Returns the maturity timestamp from loan info
+public fun loan_info_maturity_time(info: &LoanInfo): u64 { info.maturity_time }
+/// Returns the collateral amount from loan info
+public fun loan_info_collateral_amount(info: &LoanInfo): u64 { info.collateral_amount }

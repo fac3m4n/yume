@@ -1,6 +1,6 @@
 /// Module: yume::market_tests
 ///
-/// Comprehensive tests for Phase 2 of the Yume lending protocol:
+/// Comprehensive tests for Phase 2 & 3 of the Yume lending protocol:
 /// - Market creation (OrderBook + CollateralVault)
 /// - Lend order placement with Coin<BASE> deposit
 /// - Borrow order placement (no deposit)
@@ -18,6 +18,7 @@ use sui::test_scenario;
 use sui::clock;
 use sui::coin;
 use yume::market;
+use yume::liquidation;
 use yume::orderbook::{Self, OrderBook};
 use yume::position::{Self, LoanPosition};
 use yume::vault::{Self, CollateralVault};
@@ -986,6 +987,243 @@ fun test_repay_with_lender_position_fails() {
         market::repay<USDC, WSUI>(&mut lender_pos, repayment, &mut vault_obj, &clock, test_scenario::ctx(&mut scenario));
 
         test_scenario::return_to_sender(&scenario, lender_pos);
+        test_scenario::return_shared(vault_obj);
+    };
+
+    clock::destroy_for_testing(clock);
+    test_scenario::end(scenario);
+}
+
+// ============================================================
+// Phase 3 — Liquidation Tests
+// ============================================================
+
+#[test]
+/// Full liquidation flow: place → match → settle → advance clock past maturity → liquidate.
+/// Verifies that a third-party liquidator can seize collateral after loan expiry.
+fun test_liquidation_after_maturity() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    let mut clock = clock::create_for_testing(test_scenario::ctx(&mut scenario));
+    clock::set_for_testing(&mut clock, 1_000_000);
+
+    // Setup: create market, place orders, settle
+    {
+        market::create_market<USDC, WSUI>(DURATION_7_DAY, RISK_TIER_A, LTV_TIER_A, test_scenario::ctx(&mut scenario));
+    };
+
+    test_scenario::next_tx(&mut scenario, LENDER);
+    {
+        let mut book = test_scenario::take_shared<OrderBook<USDC, WSUI>>(&scenario);
+        let deposit = coin::mint_for_testing<USDC>(50_000, test_scenario::ctx(&mut scenario));
+        market::place_lend_order<USDC, WSUI>(&mut book, deposit, 500, &clock, test_scenario::ctx(&mut scenario));
+        test_scenario::return_shared(book);
+    };
+
+    test_scenario::next_tx(&mut scenario, BORROWER);
+    {
+        let mut book = test_scenario::take_shared<OrderBook<USDC, WSUI>>(&scenario);
+        market::place_borrow_order<USDC, WSUI>(&mut book, 50_000, 800, &clock, test_scenario::ctx(&mut scenario));
+        test_scenario::return_shared(book);
+    };
+
+    test_scenario::next_tx(&mut scenario, BORROWER);
+    {
+        let mut book = test_scenario::take_shared<OrderBook<USDC, WSUI>>(&scenario);
+        let mut vault_obj = test_scenario::take_shared<CollateralVault<WSUI>>(&scenario);
+        let collateral = coin::mint_for_testing<WSUI>(55_555, test_scenario::ctx(&mut scenario));
+        let receipt = market::match_orders<USDC, WSUI>(&mut book, 1, 0, &clock);
+        market::settle<USDC, WSUI>(receipt, collateral, &mut book, &mut vault_obj, &clock, test_scenario::ctx(&mut scenario));
+        test_scenario::return_shared(book);
+        test_scenario::return_shared(vault_obj);
+    };
+
+    // Verify loan info is stored in vault
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    {
+        let vault_obj = test_scenario::take_shared<CollateralVault<WSUI>>(&scenario);
+        let lender_pos = test_scenario::take_from_address<LoanPosition>(&scenario, LENDER);
+        let loan_id = position::loan_id(&lender_pos);
+
+        assert!(vault::has_loan_info(&vault_obj, loan_id) == true);
+        assert!(vault::has_collateral(&vault_obj, loan_id) == true);
+
+        let info = vault::get_loan_info(&vault_obj, loan_id);
+        assert!(vault::loan_info_lender(&info) == LENDER);
+        assert!(vault::loan_info_borrower(&info) == BORROWER);
+        assert!(vault::loan_info_principal(&info) == 50_000);
+        assert!(vault::loan_info_rate(&info) == 500);
+
+        test_scenario::return_to_address(LENDER, lender_pos);
+        test_scenario::return_shared(vault_obj);
+    };
+
+    // Advance clock PAST maturity (7 days + 1 second = 604801 seconds from start)
+    // Maturity = 1_000_000 + (604800 * 1000) = 604_801_000_000 ms
+    clock::set_for_testing(&mut clock, 604_801_000_001);
+
+    // STRANGER triggers liquidation (permissionless)
+    test_scenario::next_tx(&mut scenario, STRANGER);
+    {
+        let mut vault_obj = test_scenario::take_shared<CollateralVault<WSUI>>(&scenario);
+        let lender_pos = test_scenario::take_from_address<LoanPosition>(&scenario, LENDER);
+        let loan_id = position::loan_id(&lender_pos);
+
+        liquidation::liquidate<WSUI>(
+            &mut vault_obj,
+            loan_id,
+            &clock,
+            test_scenario::ctx(&mut scenario),
+        );
+
+        // Vault should be empty
+        assert!(vault::active_loans(&vault_obj) == 0);
+        assert!(vault::total_locked(&vault_obj) == 0);
+        assert!(vault::has_collateral(&vault_obj, loan_id) == false);
+        assert!(vault::has_loan_info(&vault_obj, loan_id) == false);
+
+        test_scenario::return_to_address(LENDER, lender_pos);
+        test_scenario::return_shared(vault_obj);
+    };
+
+    // Verify lender received collateral as compensation
+    test_scenario::next_tx(&mut scenario, LENDER);
+    {
+        let collateral_received = test_scenario::take_from_sender<coin::Coin<WSUI>>(&scenario);
+        assert!(coin::value(&collateral_received) == 55_555);
+        test_scenario::return_to_sender(&scenario, collateral_received);
+    };
+
+    clock::destroy_for_testing(clock);
+    test_scenario::end(scenario);
+}
+
+#[test]
+#[expected_failure(abort_code = liquidation::ELoanNotExpired)]
+/// Verifies that liquidation fails when the loan has not yet matured.
+fun test_liquidation_before_maturity_fails() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    let mut clock = clock::create_for_testing(test_scenario::ctx(&mut scenario));
+    clock::set_for_testing(&mut clock, 1_000_000);
+
+    // Setup: create market, place orders, settle
+    {
+        market::create_market<USDC, WSUI>(DURATION_7_DAY, RISK_TIER_A, LTV_TIER_A, test_scenario::ctx(&mut scenario));
+    };
+
+    test_scenario::next_tx(&mut scenario, LENDER);
+    {
+        let mut book = test_scenario::take_shared<OrderBook<USDC, WSUI>>(&scenario);
+        let deposit = coin::mint_for_testing<USDC>(50_000, test_scenario::ctx(&mut scenario));
+        market::place_lend_order<USDC, WSUI>(&mut book, deposit, 500, &clock, test_scenario::ctx(&mut scenario));
+        test_scenario::return_shared(book);
+    };
+
+    test_scenario::next_tx(&mut scenario, BORROWER);
+    {
+        let mut book = test_scenario::take_shared<OrderBook<USDC, WSUI>>(&scenario);
+        market::place_borrow_order<USDC, WSUI>(&mut book, 50_000, 800, &clock, test_scenario::ctx(&mut scenario));
+        test_scenario::return_shared(book);
+    };
+
+    test_scenario::next_tx(&mut scenario, BORROWER);
+    {
+        let mut book = test_scenario::take_shared<OrderBook<USDC, WSUI>>(&scenario);
+        let mut vault_obj = test_scenario::take_shared<CollateralVault<WSUI>>(&scenario);
+        let collateral = coin::mint_for_testing<WSUI>(55_555, test_scenario::ctx(&mut scenario));
+        let receipt = market::match_orders<USDC, WSUI>(&mut book, 1, 0, &clock);
+        market::settle<USDC, WSUI>(receipt, collateral, &mut book, &mut vault_obj, &clock, test_scenario::ctx(&mut scenario));
+        test_scenario::return_shared(book);
+        test_scenario::return_shared(vault_obj);
+    };
+
+    // Try to liquidate BEFORE maturity → should abort
+    // Clock is still at 1_000_000 ms, maturity is 604_801_000_000 ms
+    test_scenario::next_tx(&mut scenario, STRANGER);
+    {
+        let mut vault_obj = test_scenario::take_shared<CollateralVault<WSUI>>(&scenario);
+        let lender_pos = test_scenario::take_from_address<LoanPosition>(&scenario, LENDER);
+        let loan_id = position::loan_id(&lender_pos);
+
+        liquidation::liquidate<WSUI>(
+            &mut vault_obj,
+            loan_id,
+            &clock,
+            test_scenario::ctx(&mut scenario),
+        );
+
+        test_scenario::return_to_address(LENDER, lender_pos);
+        test_scenario::return_shared(vault_obj);
+    };
+
+    clock::destroy_for_testing(clock);
+    test_scenario::end(scenario);
+}
+
+#[test]
+#[expected_failure(abort_code = liquidation::EAlreadyLiquidated)]
+/// Verifies that double liquidation is prevented (collateral already seized).
+fun test_double_liquidation_fails() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    let mut clock = clock::create_for_testing(test_scenario::ctx(&mut scenario));
+    clock::set_for_testing(&mut clock, 1_000_000);
+
+    // Setup: create market, place orders, settle
+    {
+        market::create_market<USDC, WSUI>(DURATION_7_DAY, RISK_TIER_A, LTV_TIER_A, test_scenario::ctx(&mut scenario));
+    };
+
+    test_scenario::next_tx(&mut scenario, LENDER);
+    {
+        let mut book = test_scenario::take_shared<OrderBook<USDC, WSUI>>(&scenario);
+        let deposit = coin::mint_for_testing<USDC>(50_000, test_scenario::ctx(&mut scenario));
+        market::place_lend_order<USDC, WSUI>(&mut book, deposit, 500, &clock, test_scenario::ctx(&mut scenario));
+        test_scenario::return_shared(book);
+    };
+
+    test_scenario::next_tx(&mut scenario, BORROWER);
+    {
+        let mut book = test_scenario::take_shared<OrderBook<USDC, WSUI>>(&scenario);
+        market::place_borrow_order<USDC, WSUI>(&mut book, 50_000, 800, &clock, test_scenario::ctx(&mut scenario));
+        test_scenario::return_shared(book);
+    };
+
+    test_scenario::next_tx(&mut scenario, BORROWER);
+    {
+        let mut book = test_scenario::take_shared<OrderBook<USDC, WSUI>>(&scenario);
+        let mut vault_obj = test_scenario::take_shared<CollateralVault<WSUI>>(&scenario);
+        let collateral = coin::mint_for_testing<WSUI>(55_555, test_scenario::ctx(&mut scenario));
+        let receipt = market::match_orders<USDC, WSUI>(&mut book, 1, 0, &clock);
+        market::settle<USDC, WSUI>(receipt, collateral, &mut book, &mut vault_obj, &clock, test_scenario::ctx(&mut scenario));
+        test_scenario::return_shared(book);
+        test_scenario::return_shared(vault_obj);
+    };
+
+    // Advance past maturity
+    clock::set_for_testing(&mut clock, 604_801_000_001);
+
+    // First liquidation succeeds
+    test_scenario::next_tx(&mut scenario, STRANGER);
+    {
+        let mut vault_obj = test_scenario::take_shared<CollateralVault<WSUI>>(&scenario);
+        let lender_pos = test_scenario::take_from_address<LoanPosition>(&scenario, LENDER);
+        let loan_id = position::loan_id(&lender_pos);
+
+        liquidation::liquidate<WSUI>(&mut vault_obj, loan_id, &clock, test_scenario::ctx(&mut scenario));
+
+        test_scenario::return_to_address(LENDER, lender_pos);
+        test_scenario::return_shared(vault_obj);
+    };
+
+    // Second liquidation attempt → should fail (already liquidated)
+    test_scenario::next_tx(&mut scenario, STRANGER);
+    {
+        let mut vault_obj = test_scenario::take_shared<CollateralVault<WSUI>>(&scenario);
+        let lender_pos = test_scenario::take_from_address<LoanPosition>(&scenario, LENDER);
+        let loan_id = position::loan_id(&lender_pos);
+
+        liquidation::liquidate<WSUI>(&mut vault_obj, loan_id, &clock, test_scenario::ctx(&mut scenario));
+
+        test_scenario::return_to_address(LENDER, lender_pos);
         test_scenario::return_shared(vault_obj);
     };
 

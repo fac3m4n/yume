@@ -1,13 +1,21 @@
 // app/DAppKitClientProvider.tsx
 "use client";
 
-import { DAppKitProvider } from "@mysten/dapp-kit-react";
-import { dAppKit } from "./dapp-kit";
+import dynamic from "next/dynamic";
+
+/**
+ * Inner provider component — dynamically imported with ssr: false
+ * to avoid the @mysten/dapp-kit-react `window` access during SSR.
+ */
+const DAppKitInner = dynamic(
+  () => import("./dapp-kit-inner").then((mod) => mod.DAppKitInner),
+  { ssr: false }
+);
 
 export function DAppKitClientProvider({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  return <DAppKitProvider dAppKit={dAppKit}>{children}</DAppKitProvider>;
+  return <DAppKitInner>{children}</DAppKitInner>;
 }

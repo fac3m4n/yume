@@ -364,12 +364,13 @@ public fun settle<BASE, COLLATERAL>(
 ) {
     let current_time = clock::timestamp_ms(clock);
 
-    // Read receipt data before consuming
+    // Read receipt data before consuming (receipt is a Hot Potato — consumed by settle_receipt)
     let lender_addr = position::receipt_lender(&receipt);
     let borrower_addr = position::receipt_borrower(&receipt);
     let matched_amount = position::receipt_matched_amount(&receipt);
     let collateral_required = position::receipt_collateral_required(&receipt);
     let lend_order_id = position::receipt_lend_order_id(&receipt);
+    let matched_rate = position::receipt_rate(&receipt);
 
     // Validate collateral
     assert!(
@@ -403,6 +404,20 @@ public fun settle<BASE, COLLATERAL>(
 
     // Store collateral in vault (keyed by loan_id for repayment lookup)
     vault::deposit(vault_obj, loan_id, coin::into_balance(exact_collateral));
+
+    // Store loan metadata in vault for liquidation checks
+    // (allows third-party liquidators to verify maturity without owned objects)
+    let maturity = position::maturity_time(&lender_position);
+    vault::store_loan_info(
+        vault_obj,
+        loan_id,
+        lender_addr,
+        borrower_addr,
+        matched_amount,
+        matched_rate,
+        maturity,
+        collateral_required,
+    );
 
     // Transfer matched principal to borrower
     transfer::public_transfer(borrower_principal, borrower_addr);
@@ -486,6 +501,9 @@ entry fun repay<BASE, COLLATERAL>(
     // Withdraw collateral from vault and return to caller
     let loan_id = position::loan_id(position);
     let collateral_balance = vault::withdraw(vault_obj, loan_id);
+
+    // Remove loan metadata from vault (no longer needed after repayment)
+    vault::remove_loan_info(vault_obj, loan_id);
     let collateral_coin = coin::from_balance(collateral_balance, ctx);
     let caller = tx_context::sender(ctx);
     transfer::public_transfer(collateral_coin, caller);

@@ -425,3 +425,119 @@ export function buildRepayWithAmount(
 
   return tx;
 }
+
+// ============================================================
+// Liquidation
+// ============================================================
+
+/**
+ * Builds a PTB that liquidates an expired loan.
+ * Anyone can call this — permissionless (keeper/liquidator).
+ *
+ * Checks in the contract:
+ * 1. Collateral still exists for loan_id (not already liquidated/repaid)
+ * 2. Clock timestamp > loan maturity time
+ *
+ * On success: collateral transferred to lender as compensation.
+ */
+export function buildLiquidate(params: {
+  vaultId: string;
+  loanId: string;
+  typeArgs: MarketTypeArgs;
+}): Transaction {
+  const tx = new Transaction();
+
+  tx.moveCall({
+    target: `${PACKAGE_ID}::liquidation::liquidate`,
+    typeArguments: [params.typeArgs.collateral],
+    arguments: [
+      tx.object(params.vaultId),
+      tx.pure.id(params.loanId),
+      tx.object(SUI_CLOCK_ID),
+    ],
+  });
+
+  return tx;
+}
+
+// ============================================================
+// One-Click Leverage (PTB Composability Demo)
+// ============================================================
+
+/**
+ * Builds the "One-Click Leverage" PTB that demonstrates Sui's
+ * composability by chaining multiple operations atomically:
+ *
+ *   Deposit Collateral → Match Borrow → Settle → (Swap → Loop)
+ *
+ * This is a demo builder showing how the PTB would be constructed.
+ * Full execution requires deployed contracts + DeepBook pool liquidity.
+ *
+ * @param params.bookId - OrderBook shared object ID
+ * @param params.vaultId - CollateralVault shared object ID
+ * @param params.collateralCoinId - User's initial collateral coin
+ * @param params.lendOrderId - Existing lend order to match against
+ * @param params.borrowRate - Rate for the borrow order (bps)
+ * @param params.borrowAmount - Amount to borrow
+ * @param params.typeArgs - BASE and COLLATERAL type arguments
+ */
+export function buildLeverageDemo(params: {
+  bookId: string;
+  vaultId: string;
+  collateralCoinId: string;
+  lendOrderId: number;
+  borrowRate: number;
+  borrowAmount: number;
+  typeArgs: MarketTypeArgs;
+}): Transaction {
+  const tx = new Transaction();
+
+  // Step 1: Place a borrow order on the order book
+  tx.moveCall({
+    target: `${PACKAGE_ID}::market::place_borrow_order`,
+    typeArguments: [params.typeArgs.base, params.typeArgs.collateral],
+    arguments: [
+      tx.object(params.bookId),
+      tx.pure.u64(params.borrowAmount),
+      tx.pure.u64(params.borrowRate),
+      tx.object(SUI_CLOCK_ID),
+    ],
+  });
+
+  // Step 2: Match the borrow order against the existing lend order
+  // (returns a MatchReceipt — Hot Potato that must be consumed in Step 3)
+  const receipt = tx.moveCall({
+    target: `${PACKAGE_ID}::market::match_orders`,
+    typeArguments: [params.typeArgs.base, params.typeArgs.collateral],
+    arguments: [
+      tx.object(params.bookId),
+      tx.pure.u64(params.lendOrderId),
+      // Borrow order ID would be dynamically assigned; using 1 for demo
+      tx.pure.u64(1),
+      tx.object(SUI_CLOCK_ID),
+    ],
+  });
+
+  // Step 3: Settle the match — consumes the Hot Potato MatchReceipt
+  // Deposits collateral into the vault, transfers principal to borrower
+  tx.moveCall({
+    target: `${PACKAGE_ID}::market::settle`,
+    typeArguments: [params.typeArgs.base, params.typeArgs.collateral],
+    arguments: [
+      receipt,
+      tx.object(params.collateralCoinId),
+      tx.object(params.bookId),
+      tx.object(params.vaultId),
+      tx.object(SUI_CLOCK_ID),
+    ],
+  });
+
+  // Note: In a full leverage loop, Steps 4-6 would be:
+  // Step 4: Swap received BASE tokens for COLLATERAL on DeepBook
+  //   tx.moveCall({ target: `deepbook::place_market_order`, ... })
+  // Step 5: Deposit new COLLATERAL and borrow more BASE
+  //   (repeat Steps 1-3 with the new collateral)
+  // Step 6: Final position = ~1.9x leverage on initial collateral
+
+  return tx;
+}

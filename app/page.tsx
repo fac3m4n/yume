@@ -1,6 +1,8 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
 
 const ConnectButton = dynamic(() => import("./connect-button"), {
   ssr: false,
@@ -19,9 +21,17 @@ export default function Home() {
             Order Book Lending on Sui. Fixed rates. Fixed terms. No pools.
           </p>
         </div>
+
         <ConnectButton />
+
+        <Link href="/market">
+          <Button className="font-medium" size="lg" variant="outline">
+            Launch App
+          </Button>
+        </Link>
+
         <p className="max-w-sm text-neutral-400 text-sm">
-          Phase 1 — Core Primitives. Connect your wallet to get started.
+          Phase 3 — DeepBook Integration &amp; PTB Composability Demo.
         </p>
       </div>
     </main>
