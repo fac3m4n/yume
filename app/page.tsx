@@ -1,7 +1,15 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+"use client";
+
+import dynamic from "next/dynamic";
+
+const ClientApp = dynamic(() => import("./connect-button"), {
+  ssr: false,
+  loading: () => <div>ClientOnlyConnectButton is not rendered on server</div>,
+});
+
 export default function Home() {
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      Hello
-    </div>
-  );
+  return <ClientApp />;
 }
