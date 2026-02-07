@@ -64,10 +64,10 @@ DeFi lending today is dominated by variable-rate pool models. Borrowers have no 
 
 ```bash
 # Install dependencies
-npm install
+bun install
 
 # Run the development server
-npm run dev
+bun dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) to launch the app.
