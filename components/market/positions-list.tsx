@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -7,10 +8,11 @@ import {
   DURATION_LABELS,
   STATUS_LABELS,
 } from "@/hooks/sui/types";
-import { usePositions } from "@/hooks/sui/use-market-data";
+import { mistToSui, usePositions } from "@/hooks/sui/use-market-data";
+import { useYumeTransactions } from "@/hooks/sui/use-yume-transactions";
 
 function formatAmount(amount: bigint): string {
-  return Number(amount).toLocaleString();
+  return mistToSui(amount);
 }
 
 function timeRemaining(maturityTime: number): string {
@@ -24,22 +26,55 @@ function timeRemaining(maturityTime: number): string {
 }
 
 export function PositionsList() {
-  const { positions } = usePositions();
+  const { positions, loading, error, refetch } = usePositions();
+  const { repayLoan, txState, isConnected } = useYumeTransactions();
+  const [repayingId, setRepayingId] = useState<string | null>(null);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-8">
+        <div className="flex items-center gap-2 text-muted-foreground text-sm">
+          <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+          Loading positions...
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center py-8">
+        <p className="text-destructive text-sm">{error}</p>
+      </div>
+    );
+  }
 
   if (positions.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-8 text-center">
         <p className="text-muted-foreground text-sm">
-          No active positions. Place an order to get started.
+          {isConnected
+            ? "No active positions. Place an order to get started."
+            : "Connect your wallet to view positions."}
         </p>
       </div>
     );
+  }
+
+  async function handleRepay(pos: (typeof positions)[0]) {
+    setRepayingId(pos.id);
+    const digest = await repayLoan(pos.id, pos.principal, pos.rate);
+    if (digest) {
+      refetch();
+    }
+    setRepayingId(null);
   }
 
   return (
     <div className="flex flex-col gap-3">
       {positions.map((pos) => {
         const isLend = pos.side === 0;
+        const isRepaying = repayingId === pos.id;
         return (
           <div
             className="flex items-center justify-between rounded-lg border p-4 transition-colors hover:bg-muted/30"
@@ -62,7 +97,7 @@ export function PositionsList() {
               </div>
               <div className="flex items-baseline gap-4 text-sm">
                 <span className="font-mono font-semibold">
-                  {formatAmount(pos.principal)} USDC
+                  {formatAmount(pos.principal)} SUI
                 </span>
                 <span className="text-muted-foreground">
                   @ {bpsToPercent(pos.rate)}
@@ -78,12 +113,27 @@ export function PositionsList() {
 
             <div className="flex gap-2">
               {!isLend && pos.status === 0 && (
-                <Button size="sm" variant="outline">
-                  Repay
+                <Button
+                  disabled={isRepaying}
+                  onClick={() => handleRepay(pos)}
+                  size="sm"
+                  variant="outline"
+                >
+                  {isRepaying ? "Repaying..." : "Repay"}
                 </Button>
               )}
-              <Button className="text-xs" size="sm" variant="ghost">
-                Details
+              <Button
+                className="text-xs"
+                onClick={() => {
+                  window.open(
+                    `https://suiscan.xyz/mainnet/object/${pos.id}`,
+                    "_blank"
+                  );
+                }}
+                size="sm"
+                variant="ghost"
+              >
+                Explorer
               </Button>
             </div>
           </div>

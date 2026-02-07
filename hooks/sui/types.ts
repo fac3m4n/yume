@@ -15,6 +15,14 @@ export const PACKAGE_ID = process.env.NEXT_PUBLIC_YUME_PACKAGE_ID ?? "";
 /** Sui shared Clock object ID */
 export const SUI_CLOCK_ID = "0x6";
 
+/** Deployed shared object IDs (set after mainnet deployment) */
+export const ORDERBOOK_ID = process.env.NEXT_PUBLIC_ORDERBOOK_ID ?? "";
+export const VAULT_ID = process.env.NEXT_PUBLIC_VAULT_ID ?? "";
+export const POOL_ID = process.env.NEXT_PUBLIC_POOL_ID ?? "";
+
+/** Fully-qualified SUI coin type */
+export const SUI_TYPE = "0x2::sui::SUI";
+
 // ============================================================
 // Order Constants
 // ============================================================

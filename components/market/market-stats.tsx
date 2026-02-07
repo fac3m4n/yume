@@ -5,6 +5,19 @@ import { useMarketStats } from "@/hooks/sui/use-market-data";
 export function MarketStats() {
   const stats = useMarketStats();
 
+  if (stats.loading) {
+    return (
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div className="animate-pulse rounded-lg border bg-card p-3" key={i}>
+            <div className="mb-1 h-3 w-12 rounded bg-muted" />
+            <div className="h-5 w-16 rounded bg-muted" />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
       <StatCard label="Market" value={stats.market} />

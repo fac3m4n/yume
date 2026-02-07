@@ -12,7 +12,8 @@ const GRPC_URLS = {
 export const dAppKit = createDAppKit({
   enableBurnerWallet: process.env.NODE_ENV === "development",
   networks: ["mainnet", "testnet"],
-  defaultNetwork: "testnet",
+  defaultNetwork:
+    (process.env.NEXT_PUBLIC_SUI_NETWORK as "mainnet" | "testnet") ?? "mainnet",
   createClient(network) {
     return new SuiGrpcClient({ network, baseUrl: GRPC_URLS[network] });
   },

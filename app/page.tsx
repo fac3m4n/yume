@@ -31,8 +31,7 @@ export default function Home() {
         </Link>
 
         <p className="max-w-sm text-neutral-400 text-sm">
-          Phase 4 — Hybrid Liquidity Pools. Passive yield meets order book
-          precision.
+          Live on Sui Mainnet — Order Book Lending + Hybrid Liquidity Pools.
         </p>
       </div>
     </main>
