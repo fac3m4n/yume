@@ -541,3 +541,123 @@ export function buildLeverageDemo(params: {
 
   return tx;
 }
+
+// ============================================================
+// Pool Operations (Phase 4 — Hybrid Pools)
+// ============================================================
+
+/**
+ * Builds a PTB that creates a new Hybrid Liquidity Pool
+ * for an existing OrderBook market.
+ */
+export function buildCreatePool(params: {
+  bookId: string;
+  minRate: number;
+  maxRate: number;
+  numBuckets: number;
+  typeArgs: MarketTypeArgs;
+}): Transaction {
+  const tx = new Transaction();
+
+  tx.moveCall({
+    target: `${PACKAGE_ID}::market::create_pool`,
+    typeArguments: [params.typeArgs.base, params.typeArgs.collateral],
+    arguments: [
+      tx.object(params.bookId),
+      tx.pure.u64(params.minRate),
+      tx.pure.u64(params.maxRate),
+      tx.pure.u64(params.numBuckets),
+    ],
+  });
+
+  return tx;
+}
+
+/**
+ * Builds a PTB that deposits BASE tokens into a liquidity pool.
+ * LP receives shares proportional to their deposit vs pool value.
+ */
+export function buildPoolDeposit(params: {
+  poolId: string;
+  depositCoinId: string;
+  typeArgs: MarketTypeArgs;
+}): Transaction {
+  const tx = new Transaction();
+
+  tx.moveCall({
+    target: `${PACKAGE_ID}::pool::deposit`,
+    typeArguments: [params.typeArgs.base],
+    arguments: [tx.object(params.poolId), tx.object(params.depositCoinId)],
+  });
+
+  return tx;
+}
+
+/**
+ * Builds a PTB that deposits a specific amount by splitting from a source coin.
+ */
+export function buildPoolDepositSplit(params: {
+  poolId: string;
+  sourceCoinId: string;
+  amount: number;
+  typeArgs: MarketTypeArgs;
+}): Transaction {
+  const tx = new Transaction();
+
+  const [depositCoin] = tx.splitCoins(tx.object(params.sourceCoinId), [
+    tx.pure.u64(params.amount),
+  ]);
+
+  tx.moveCall({
+    target: `${PACKAGE_ID}::pool::deposit`,
+    typeArguments: [params.typeArgs.base],
+    arguments: [tx.object(params.poolId), depositCoin],
+  });
+
+  return tx;
+}
+
+/**
+ * Builds a PTB that withdraws from a liquidity pool by burning LP shares.
+ * Returns pro-rata share of available (undeployed) balance.
+ */
+export function buildPoolWithdraw(params: {
+  poolId: string;
+  sharesToBurn: number;
+  typeArgs: MarketTypeArgs;
+}): Transaction {
+  const tx = new Transaction();
+
+  tx.moveCall({
+    target: `${PACKAGE_ID}::pool::withdraw`,
+    typeArguments: [params.typeArgs.base],
+    arguments: [tx.object(params.poolId), tx.pure.u64(params.sharesToBurn)],
+  });
+
+  return tx;
+}
+
+/**
+ * Builds a PTB that rebalances a pool's order book positions.
+ * Admin-only: cancels existing orders, recovers deposits,
+ * and places new orders using the linear rate curve.
+ */
+export function buildRebalancePool(params: {
+  poolId: string;
+  bookId: string;
+  typeArgs: MarketTypeArgs;
+}): Transaction {
+  const tx = new Transaction();
+
+  tx.moveCall({
+    target: `${PACKAGE_ID}::market::rebalance_pool`,
+    typeArguments: [params.typeArgs.base, params.typeArgs.collateral],
+    arguments: [
+      tx.object(params.poolId),
+      tx.object(params.bookId),
+      tx.object(SUI_CLOCK_ID),
+    ],
+  });
+
+  return tx;
+}

@@ -6,6 +6,7 @@ import { LeverageDemo } from "@/components/market/leverage-demo";
 import { MarketStats } from "@/components/market/market-stats";
 import { OrderBookDisplay } from "@/components/market/order-book-display";
 import { PlaceOrderForm } from "@/components/market/place-order-form";
+import { PoolPanel } from "@/components/market/pool-panel";
 import { PositionsList } from "@/components/market/positions-list";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
@@ -90,6 +91,21 @@ export default function MarketPage() {
           </CardHeader>
           <CardContent>
             <PositionsList />
+          </CardContent>
+        </Card>
+
+        {/* Hybrid Pool — Phase 4 */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              Hybrid Liquidity Pool
+              <span className="rounded-full bg-emerald-600/10 px-2 py-0.5 font-normal text-emerald-600 text-xs">
+                Passive Yield
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <PoolPanel />
           </CardContent>
         </Card>
 

@@ -75,7 +75,7 @@ PROJECT & CURRENT TASK:
 
 Project Name: Yume (Sui Order Book Lending)
 
-Current Phase: Phase 3 - DeepBook & PTB Integration
+Current Phase: Phase 4 - The Hybrid Pools
 
 Task:
 

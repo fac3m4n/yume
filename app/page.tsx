@@ -31,7 +31,8 @@ export default function Home() {
         </Link>
 
         <p className="max-w-sm text-neutral-400 text-sm">
-          Phase 3 — DeepBook Integration &amp; PTB Composability Demo.
+          Phase 4 — Hybrid Liquidity Pools. Passive yield meets order book
+          precision.
         </p>
       </div>
     </main>

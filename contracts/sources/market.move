@@ -46,6 +46,7 @@ use sui::clock::{Self, Clock};
 use sui::coin::{Self, Coin};
 use sui::event;
 use yume::orderbook::{Self, OrderBook};
+use yume::pool::{Self, LiquidityPool};
 use yume::position::{Self, MatchReceipt, LoanPosition};
 use yume::vault::{Self, CollateralVault};
 
@@ -527,4 +528,56 @@ entry fun repay<BASE, COLLATERAL>(
         interest,
         total_repaid: total_due,
     });
+}
+
+// ============================================================
+// Pool Operations (Phase 4 — Hybrid Pools)
+// ============================================================
+
+/// Creates a new LiquidityPool for an existing OrderBook market.
+///
+/// The pool will inject liquidity into the referenced OrderBook
+/// by algorithmically placing lend orders across a rate curve.
+///
+/// # Parameters
+/// - `book`: Reference to the OrderBook (verifies it exists)
+/// - `min_rate`: Lowest rate for the linear curve (bps)
+/// - `max_rate`: Highest rate for the linear curve (bps)
+/// - `num_buckets`: Number of rate levels (>= 2)
+///
+/// # Abort Conditions
+/// - `EInvalidConfig` (604): Invalid rate or bucket configuration
+entry fun create_pool<BASE, COLLATERAL>(
+    book: &OrderBook<BASE, COLLATERAL>,
+    min_rate: u64,
+    max_rate: u64,
+    num_buckets: u64,
+    ctx: &mut TxContext,
+) {
+    let book_id = object::id(book);
+    let admin = tx_context::sender(ctx);
+    let pool_obj = pool::new<BASE>(admin, book_id, min_rate, max_rate, num_buckets, ctx);
+    pool::share(pool_obj);
+}
+
+/// Rebalances the pool's order book positions.
+///
+/// Admin-only function that cancels existing pool orders,
+/// recovers unmatched deposits, and places new orders at
+/// algorithmically-determined rates.
+///
+/// # Parameters
+/// - `pool_obj`: Mutable reference to the LiquidityPool
+/// - `book`: Mutable reference to the OrderBook
+/// - `clock`: Sui shared Clock
+///
+/// # Abort Conditions
+/// - `EUnauthorized` (603): Caller is not the pool admin
+entry fun rebalance_pool<BASE, COLLATERAL>(
+    pool_obj: &mut LiquidityPool<BASE>,
+    book: &mut OrderBook<BASE, COLLATERAL>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    pool::rebalance<BASE, COLLATERAL>(pool_obj, book, clock, ctx);
 }

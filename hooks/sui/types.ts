@@ -141,6 +141,20 @@ export interface VaultState {
   totalLocked: bigint;
 }
 
+/** Represents the LiquidityPool shared object state (Phase 4) */
+export interface PoolState {
+  id: string;
+  admin: string;
+  bookId: string;
+  totalShares: bigint;
+  availableBalance: bigint;
+  deployedBalance: bigint;
+  minRate: number;
+  maxRate: number;
+  numBuckets: number;
+  isActive: boolean;
+}
+
 // ============================================================
 // Type Argument Helpers
 // ============================================================

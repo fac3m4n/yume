@@ -573,6 +573,17 @@ public fun order_timestamp(order: &Order): u64 { order.timestamp }
 /// Returns whether the order is still active
 public fun order_is_active(order: &Order): bool { order.is_active }
 
+/// Checks if an order exists AND is still active.
+/// Used by the pool module during rebalance to skip already-matched orders.
+public fun has_active_order<BASE, COLLATERAL>(
+    book: &OrderBook<BASE, COLLATERAL>,
+    order_id: u64,
+): bool {
+    if (!table::contains(&book.orders, order_id)) { return false };
+    let order = table::borrow(&book.orders, order_id);
+    order.is_active
+}
+
 // ============================================================
 // Deposit Management (Dynamic Fields)
 // ============================================================
