@@ -23,11 +23,9 @@
 /// - yume::market (entry functions for order placement and matching)
 module yume::orderbook;
 
-use sui::object::{Self, UID, ID};
 use sui::table::{Self, Table};
 use sui::balance::Balance;
 use sui::dynamic_field;
-use sui::tx_context::TxContext;
 use sui::event;
 
 // ============================================================
@@ -263,6 +261,13 @@ public(package) fun new<BASE, COLLATERAL>(
         min_order_amount: DEFAULT_MIN_ORDER,
         is_active: true,
     }
+}
+
+/// Shares an OrderBook as a Sui shared object.
+/// Must be called from within the yume package (transfer::share_object
+/// is restricted to the defining module).
+public(package) fun share<BASE, COLLATERAL>(book: OrderBook<BASE, COLLATERAL>) {
+    transfer::share_object(book);
 }
 
 // ============================================================

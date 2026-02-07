@@ -19,8 +19,6 @@
 /// - yume::orderbook (matching engine creates MatchReceipts)
 module yume::position;
 
-use sui::object::{Self, UID, ID};
-use sui::tx_context::TxContext;
 use sui::event;
 
 // ============================================================
@@ -35,18 +33,22 @@ const ORDER_SIDE_BORROW: u8 = 1;
 /// Position status: Loan is active and ongoing
 const STATUS_ACTIVE: u8 = 0;
 /// Position status: Loan has been repaid by borrower
+#[allow(unused_const)]
 const STATUS_REPAID: u8 = 1;
 /// Position status: Collateral was liquidated due to undercollateralization
-const _STATUS_LIQUIDATED: u8 = 2;
+#[allow(unused_const)]
+const STATUS_LIQUIDATED: u8 = 2;
 /// Position status: Loan matured without repayment
-const _STATUS_DEFAULTED: u8 = 3;
+#[allow(unused_const)]
+const STATUS_DEFAULTED: u8 = 3;
 
 // ============================================================
 // Error Constants
 // ============================================================
 
 /// Abort: Invalid position side (must be 0 or 1)
-const _EInvalidSide: u64 = 0;
+#[allow(unused_const)]
+const EInvalidSide: u64 = 0;
 /// Abort: Invalid position status transition
 const EInvalidStatus: u64 = 1;
 

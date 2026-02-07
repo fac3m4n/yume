@@ -3,7 +3,8 @@ name = "yume"
 edition = "2024.beta"
 
 [dependencies]
-Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "framework/testnet" }
+# Sui framework is auto-resolved by the CLI.
+# Explicit dependency removed per Sui toolchain recommendation.
 
 [addresses]
 yume = "0x0"

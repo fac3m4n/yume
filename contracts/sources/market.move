@@ -39,13 +39,11 @@
 /// # Consumers
 /// - Frontend hooks (usePlaceLendOrder, usePlaceBorrowOrder, useSettle, useRepay)
 /// - Off-chain keepers (liquidation bots — Phase 3)
+#[allow(unused_mut_parameter, lint(self_transfer))]
 module yume::market;
 
 use sui::clock::{Self, Clock};
 use sui::coin::{Self, Coin};
-use sui::object::{Self, ID};
-use sui::transfer;
-use sui::tx_context;
 use sui::event;
 use yume::orderbook::{Self, OrderBook};
 use yume::position::{Self, MatchReceipt, LoanPosition};
@@ -127,8 +125,8 @@ entry fun create_market<BASE, COLLATERAL>(
     );
     let vault_obj = vault::new<COLLATERAL>(ctx);
 
-    transfer::share_object(book);
-    transfer::share_object(vault_obj);
+    orderbook::share(book);
+    vault::share(vault_obj);
 }
 
 // ============================================================

@@ -17,10 +17,8 @@
 /// - yume::market (settle deposits collateral, repay withdraws it)
 module yume::vault;
 
-use sui::object::{Self, UID, ID};
 use sui::balance::{Self, Balance};
 use sui::dynamic_field;
-use sui::tx_context::TxContext;
 use sui::event;
 
 // ============================================================
@@ -92,6 +90,13 @@ public(package) fun new<COLLATERAL>(ctx: &mut TxContext): CollateralVault<COLLAT
         active_loans: 0,
         total_locked: 0,
     }
+}
+
+/// Shares a CollateralVault as a Sui shared object.
+/// Must be called from within the yume package (transfer::share_object
+/// is restricted to the defining module).
+public(package) fun share<COLLATERAL>(vault_obj: CollateralVault<COLLATERAL>) {
+    transfer::share_object(vault_obj);
 }
 
 // ============================================================
