@@ -7,10 +7,13 @@ export function MarketStats() {
 
   if (stats.loading) {
     return (
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
-        {Array.from({ length: 6 }).map((_, i) => (
-          <div className="animate-pulse rounded-lg border bg-card p-3" key={i}>
-            <div className="mb-1 h-3 w-12 rounded bg-muted" />
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-8">
+        {Array.from({ length: 8 }).map((_, i) => (
+          <div
+            className="animate-pulse space-y-2 rounded-lg border p-3"
+            key={i}
+          >
+            <div className="h-3 w-12 rounded bg-muted" />
             <div className="h-5 w-16 rounded bg-muted" />
           </div>
         ))}
@@ -18,48 +21,25 @@ export function MarketStats() {
     );
   }
 
-  return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
-      <StatCard label="Market" value={stats.market} />
-      <StatCard label="Duration" value={stats.duration} />
-      <StatCard label="Risk Tier" value={stats.riskTier} />
-      <StatCard
-        accent="emerald"
-        label="Best Lend Rate"
-        value={stats.bestAskRate}
-      />
-      <StatCard
-        accent="rose"
-        label="Best Borrow Rate"
-        value={stats.bestBidRate}
-      />
-      <StatCard label="Spread" value={stats.spread} />
-    </div>
-  );
-}
-
-function StatCard({
-  label,
-  value,
-  accent,
-}: {
-  label: string;
-  value: string;
-  accent?: "emerald" | "rose";
-}) {
-  const valueColor =
-    accent === "emerald"
-      ? "text-emerald-600"
-      : accent === "rose"
-        ? "text-rose-500"
-        : "text-foreground";
+  const items = [
+    { label: "Market", value: stats.market },
+    { label: "Duration", value: stats.duration },
+    { label: "TVL", value: stats.tvl },
+    { label: "Active Orders", value: stats.activeOrders.toString() },
+    { label: "Best Ask", value: stats.bestAskRate },
+    { label: "Best Bid", value: stats.bestBidRate },
+    { label: "Spread", value: stats.spread },
+    { label: "Max LTV", value: stats.maxLtv },
+  ];
 
   return (
-    <div className="rounded-lg border bg-card p-3">
-      <div className="text-muted-foreground text-xs">{label}</div>
-      <div className={`font-mono font-semibold text-sm ${valueColor}`}>
-        {value}
-      </div>
+    <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-8">
+      {items.map((item) => (
+        <div className="space-y-1 rounded-lg border p-3" key={item.label}>
+          <p className="text-muted-foreground text-xs">{item.label}</p>
+          <p className="font-mono font-semibold text-sm">{item.value}</p>
+        </div>
+      ))}
     </div>
   );
 }

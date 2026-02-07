@@ -6,35 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { bpsToPercent } from "@/hooks/sui/types";
-import { mistToSui, usePoolState } from "@/hooks/sui/use-market-data";
+import { useMarket } from "@/hooks/sui/use-market-context";
+import { formatTokenAmount, usePoolState } from "@/hooks/sui/use-market-data";
 import { useYumeTransactions } from "@/hooks/sui/use-yume-transactions";
 
-function computeBuckets(
-  minRate: number,
-  maxRate: number,
-  numBuckets: number,
-  deployed: bigint
-) {
-  const perBucket = Number(deployed) / numBuckets;
-  const spread = maxRate - minRate;
-  return Array.from({ length: numBuckets }, (_, i) => ({
-    rate: minRate + Math.round((i * spread) / (numBuckets - 1)),
-    amount: perBucket,
-  }));
-}
-
-/** Convert SUI amount (e.g. "0.1") to MIST (bigint) */
-function suiToMist(sui: string): bigint {
-  const num = Number.parseFloat(sui);
-  if (isNaN(num) || num <= 0) return BigInt(0);
-  return BigInt(Math.floor(num * 1e9));
-}
+type PoolAction = "deposit" | "withdraw" | "rebalance";
 
 export function PoolPanel() {
-  const [depositAmount, setDepositAmount] = useState("");
-  const [withdrawShares, setWithdrawShares] = useState("");
-  const [successDigest, setSuccessDigest] = useState<string | null>(null);
-
+  const { market } = useMarket();
   const { pool, loading, error, refetch } = usePoolState();
   const {
     depositToPool,
@@ -44,13 +23,40 @@ export function PoolPanel() {
     isConnected,
     account,
   } = useYumeTransactions();
+  const [action, setAction] = useState<PoolAction>("deposit");
+  const [amount, setAmount] = useState("");
+  const [successDigest, setSuccessDigest] = useState<string | null>(null);
+
+  const sym = market.baseSymbol;
+  const dec = market.baseDecimals;
+
+  // Only SUI/SUI market has a pool
+  if (!market.poolId) {
+    return (
+      <div className="flex flex-col items-center justify-center rounded-lg border bg-muted/30 py-12 text-center">
+        <p className="font-medium text-muted-foreground">
+          No liquidity pool for this market
+        </p>
+        <p className="mt-1 text-muted-foreground text-xs">
+          Hybrid pools are available on the SUI / SUI market.
+        </p>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <div className="flex items-center gap-2 text-muted-foreground text-sm">
-          <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-          Loading pool...
+      <div className="flex flex-col gap-4">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          {[1, 2, 3, 4].map((i) => (
+            <div
+              className="animate-pulse space-y-2 rounded-lg border p-4"
+              key={i}
+            >
+              <div className="h-4 w-16 rounded bg-muted" />
+              <div className="h-6 w-24 rounded bg-muted" />
+            </div>
+          ))}
         </div>
       </div>
     );
@@ -58,230 +64,179 @@ export function PoolPanel() {
 
   if (error || !pool) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <p className="text-destructive text-sm">{error ?? "Pool not found"}</p>
+      <div className="flex items-center justify-center py-12 text-center">
+        <p className="text-destructive text-sm">
+          {error ?? "Failed to load pool data."}
+        </p>
       </div>
     );
   }
 
-  const buckets = computeBuckets(
-    pool.minRate,
-    pool.maxRate,
-    pool.numBuckets,
-    pool.deployedBalance
-  );
+  const isAdmin =
+    account?.address &&
+    pool.admin.toLowerCase() === account.address.toLowerCase();
 
-  const totalValue =
-    Number(pool.availableBalance) + Number(pool.deployedBalance);
+  const totalValue = pool.availableBalance + pool.deployedBalance;
   const utilization =
     totalValue > 0
-      ? ((Number(pool.deployedBalance) / totalValue) * 100).toFixed(1)
-      : "0.0";
+      ? Number((pool.deployedBalance * BigInt(10_000)) / totalValue) / 100
+      : 0;
 
-  const isAdmin = account?.address && pool.admin === account.address;
-
-  async function handleDeposit() {
-    const amountMist = suiToMist(depositAmount);
-    if (amountMist <= 0) return;
+  async function handleAction() {
     setSuccessDigest(null);
-    const digest = await depositToPool(amountMist);
-    if (digest) {
-      setSuccessDigest(digest);
-      setDepositAmount("");
-      refetch();
+    const amountSmallest = BigInt(
+      Math.floor(Number.parseFloat(amount || "0") * 10 ** dec)
+    );
+    let digest: string | null = null;
+
+    if (action === "deposit") {
+      digest = await depositToPool(amountSmallest);
+    } else if (action === "withdraw") {
+      digest = await withdrawFromPool(amountSmallest);
+    } else if (action === "rebalance") {
+      digest = await rebalancePool();
     }
-  }
 
-  async function handleWithdraw() {
-    const shares = BigInt(withdrawShares || "0");
-    if (shares <= 0) return;
-    setSuccessDigest(null);
-    const digest = await withdrawFromPool(shares);
     if (digest) {
       setSuccessDigest(digest);
-      setWithdrawShares("");
-      refetch();
-    }
-  }
-
-  async function handleRebalance() {
-    setSuccessDigest(null);
-    const digest = await rebalancePool();
-    if (digest) {
-      setSuccessDigest(digest);
-      refetch();
+      setAmount("");
+      setTimeout(() => refetch(), 2000);
     }
   }
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-6">
       {/* Pool Stats */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <div className="rounded-lg border bg-card p-3">
-          <div className="text-muted-foreground text-xs">Total Value</div>
-          <div className="font-mono font-semibold text-sm">
-            {mistToSui(BigInt(totalValue))} SUI
-          </div>
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <div className="space-y-1 rounded-lg border p-4">
+          <p className="text-muted-foreground text-xs">Total Value</p>
+          <p className="font-mono font-semibold text-lg">
+            {formatTokenAmount(totalValue, dec)}
+          </p>
+          <p className="text-muted-foreground text-xs">{sym}</p>
         </div>
-        <div className="rounded-lg border bg-card p-3">
-          <div className="text-muted-foreground text-xs">Utilization</div>
-          <div className="font-mono font-semibold text-sm">{utilization}%</div>
+        <div className="space-y-1 rounded-lg border p-4">
+          <p className="text-muted-foreground text-xs">Available</p>
+          <p className="font-mono font-semibold text-lg">
+            {formatTokenAmount(pool.availableBalance, dec)}
+          </p>
+          <p className="text-muted-foreground text-xs">{sym}</p>
         </div>
-        <div className="rounded-lg border bg-card p-3">
-          <div className="text-muted-foreground text-xs">Rate Range</div>
-          <div className="font-mono font-semibold text-sm">
-            {bpsToPercent(pool.minRate)} – {bpsToPercent(pool.maxRate)}
-          </div>
+        <div className="space-y-1 rounded-lg border p-4">
+          <p className="text-muted-foreground text-xs">Deployed</p>
+          <p className="font-mono font-semibold text-lg">
+            {formatTokenAmount(pool.deployedBalance, dec)}
+          </p>
+          <p className="text-muted-foreground text-xs">{sym}</p>
         </div>
-        <div className="rounded-lg border bg-card p-3">
-          <div className="text-muted-foreground text-xs">Total Shares</div>
-          <div className="font-mono font-semibold text-sm">
-            {Number(pool.totalShares).toLocaleString()}
-          </div>
-        </div>
-      </div>
-
-      {/* Rate Distribution Visualization */}
-      <div>
-        <div className="mb-2 font-medium text-muted-foreground text-xs">
-          Linear Curve — Order Distribution
-        </div>
-        <div className="flex h-24 items-end gap-1">
-          {buckets.map((bucket) => {
-            const maxAmount = Math.max(...buckets.map((b) => b.amount));
-            const height =
-              maxAmount > 0 ? (bucket.amount / maxAmount) * 100 : 0;
-            return (
-              <div
-                className="flex flex-1 flex-col items-center gap-1"
-                key={`bucket-${bucket.rate}`}
-              >
-                <div
-                  className="w-full rounded-t bg-emerald-600/80 transition-all"
-                  style={{ height: `${Math.max(height, 8)}%` }}
-                />
-                <span className="font-mono text-[10px] text-muted-foreground">
-                  {bpsToPercent(bucket.rate)}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-        <div className="mt-1 flex justify-between text-[10px] text-muted-foreground">
-          <span>
-            {buckets[0]?.amount
-              ? mistToSui(BigInt(Math.floor(buckets[0].amount)))
-              : "0"}{" "}
-            SUI each
-          </span>
-          <span>{pool.numBuckets} orders</span>
+        <div className="space-y-1 rounded-lg border p-4">
+          <p className="text-muted-foreground text-xs">Utilization</p>
+          <p className="font-mono font-semibold text-lg">
+            {utilization.toFixed(1)}%
+          </p>
+          <p className="text-muted-foreground text-xs">
+            Rate: {bpsToPercent(pool.minRate)} – {bpsToPercent(pool.maxRate)}
+          </p>
         </div>
       </div>
 
-      {/* Admin: Rebalance */}
-      {isAdmin && (
-        <Button
-          className="w-full"
-          disabled={txState.loading}
-          onClick={handleRebalance}
-          variant="outline"
+      {/* Pool Details */}
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <Badge variant="secondary">
+          Shares: {formatTokenAmount(pool.totalShares, dec)}
+        </Badge>
+        <Badge variant="outline">Buckets: {pool.numBuckets}</Badge>
+        <Badge
+          className={pool.isActive ? "bg-emerald-600" : ""}
+          variant={pool.isActive ? "default" : "destructive"}
         >
-          {txState.loading ? "Rebalancing..." : "Rebalance Pool Orders"}
-        </Button>
-      )}
-
-      {/* Success message */}
-      {successDigest && (
-        <div className="rounded-lg border border-emerald-500/50 bg-emerald-500/10 p-2 text-xs">
-          <span className="text-emerald-600">Transaction confirmed!</span>{" "}
-          <a
-            className="font-mono text-emerald-600 underline"
-            href={`https://suiscan.xyz/mainnet/tx/${successDigest}`}
-            rel="noopener noreferrer"
-            target="_blank"
-          >
-            View on Explorer
-          </a>
-        </div>
-      )}
-
-      {/* Error */}
-      {txState.error && (
-        <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-2 text-destructive text-xs">
-          {txState.error}
-        </div>
-      )}
-
-      {/* Deposit / Withdraw */}
-      <div className="grid gap-4 sm:grid-cols-2">
-        {/* Deposit */}
-        <div className="flex flex-col gap-2 rounded-lg border p-3">
-          <Label className="font-medium text-sm" htmlFor="pool-deposit">
-            Deposit SUI
-          </Label>
-          <Input
-            className="font-mono"
-            id="pool-deposit"
-            onChange={(e) => setDepositAmount(e.target.value)}
-            placeholder="0.1"
-            step="0.001"
-            type="number"
-            value={depositAmount}
-          />
-          {depositAmount && (
-            <div className="text-muted-foreground text-xs">
-              ≈ {depositAmount} SUI → LP shares
-            </div>
-          )}
-          <Button
-            className="bg-emerald-600 hover:bg-emerald-700"
-            disabled={!(depositAmount && isConnected) || txState.loading}
-            onClick={handleDeposit}
-            size="sm"
-          >
-            {txState.loading ? "Depositing..." : "Deposit"}
-          </Button>
-        </div>
-
-        {/* Withdraw */}
-        <div className="flex flex-col gap-2 rounded-lg border p-3">
-          <div className="flex items-center justify-between">
-            <Label className="font-medium text-sm" htmlFor="pool-withdraw">
-              Withdraw
-            </Label>
-            <Badge className="text-[10px]" variant="secondary">
-              {Number(pool.totalShares).toLocaleString()} total shares
-            </Badge>
-          </div>
-          <Input
-            className="font-mono"
-            id="pool-withdraw"
-            onChange={(e) => setWithdrawShares(e.target.value)}
-            placeholder="Shares to burn"
-            type="number"
-            value={withdrawShares}
-          />
-          {withdrawShares && (
-            <div className="text-muted-foreground text-xs">
-              Burns {Number(withdrawShares).toLocaleString()} shares
-            </div>
-          )}
-          <Button
-            disabled={!(withdrawShares && isConnected) || txState.loading}
-            onClick={handleWithdraw}
-            size="sm"
-            variant="outline"
-          >
-            {txState.loading ? "Withdrawing..." : "Withdraw"}
-          </Button>
-        </div>
+          {pool.isActive ? "Active" : "Paused"}
+        </Badge>
       </div>
 
-      {!isConnected && (
-        <p className="text-center text-muted-foreground text-xs">
-          Connect wallet to manage pool positions on mainnet
-        </p>
-      )}
+      {/* Actions */}
+      <div className="flex flex-col gap-4 border-t pt-4">
+        <div className="flex gap-1 rounded-lg bg-muted p-1">
+          {(["deposit", "withdraw", "rebalance"] as PoolAction[]).map((a) => (
+            <button
+              className={`flex-1 rounded-md px-3 py-1.5 font-medium text-sm capitalize transition-colors ${
+                action === a
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+              key={a}
+              onClick={() => setAction(a)}
+              type="button"
+            >
+              {a}
+            </button>
+          ))}
+        </div>
+
+        {action !== "rebalance" && (
+          <div className="flex flex-col gap-2">
+            <Label className="text-sm" htmlFor="pool-amount">
+              {action === "deposit"
+                ? `Deposit Amount (${sym})`
+                : "Shares to Withdraw"}
+            </Label>
+            <Input
+              className="font-mono"
+              id="pool-amount"
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="1.0"
+              step="0.01"
+              type="number"
+              value={amount}
+            />
+          </div>
+        )}
+
+        {action === "rebalance" && !isAdmin && (
+          <p className="text-muted-foreground text-xs">
+            Only the pool admin can trigger rebalance.
+          </p>
+        )}
+
+        {txState.error && (
+          <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-2 text-destructive text-xs">
+            {txState.error}
+          </div>
+        )}
+
+        {successDigest && (
+          <div className="rounded-lg border border-emerald-500/50 bg-emerald-500/10 p-2 text-xs">
+            <span className="text-emerald-600">Success!</span>{" "}
+            <a
+              className="font-mono text-emerald-600 underline"
+              href={`https://suiscan.xyz/mainnet/tx/${successDigest}`}
+              rel="noopener noreferrer"
+              target="_blank"
+            >
+              View tx
+            </a>
+          </div>
+        )}
+
+        <Button
+          className="w-full capitalize"
+          disabled={
+            !isConnected ||
+            txState.loading ||
+            (action === "rebalance" && !isAdmin)
+          }
+          onClick={handleAction}
+        >
+          {txState.loading ? (
+            <span className="flex items-center gap-2">
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+              Processing...
+            </span>
+          ) : (
+            action
+          )}
+        </Button>
+      </div>
     </div>
   );
 }

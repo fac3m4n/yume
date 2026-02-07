@@ -18,20 +18,28 @@ export default function Home() {
         <div className="flex flex-col gap-2">
           <h1 className="font-bold text-4xl tracking-tight">Yume Protocol</h1>
           <p className="text-lg text-neutral-500">
-            Order Book Lending on Sui. Fixed rates. Fixed terms. No pools.
+            Order Book Lending on Sui. Fixed rates. Fixed terms. Peer-to-peer.
           </p>
         </div>
 
         <ConnectButton />
 
-        <Link href="/market">
-          <Button className="font-medium" size="lg" variant="outline">
-            Launch App
-          </Button>
-        </Link>
+        <div className="flex gap-3">
+          <Link href="/market">
+            <Button className="font-medium" size="lg" variant="outline">
+              Launch App
+            </Button>
+          </Link>
+          <Link href="/docs">
+            <Button className="font-medium" size="lg" variant="ghost">
+              Read Docs
+            </Button>
+          </Link>
+        </div>
 
         <p className="max-w-sm text-neutral-400 text-sm">
-          Live on Sui Mainnet — Order Book Lending + Hybrid Liquidity Pools.
+          Live on Sui Mainnet — 3 Markets, Hybrid Liquidity Pools, PTB
+          Composability.
         </p>
       </div>
     </main>

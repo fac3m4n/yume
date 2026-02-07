@@ -1,21 +1,21 @@
 "use client";
 
 import { bpsToPercent } from "@/hooks/sui/types";
-import { mistToSui, useOrderBook } from "@/hooks/sui/use-market-data";
-
-function formatAmount(amount: bigint): string {
-  return mistToSui(amount);
-}
+import { useMarket } from "@/hooks/sui/use-market-context";
+import { formatTokenAmount, useOrderBook } from "@/hooks/sui/use-market-data";
 
 export function OrderBookDisplay() {
+  const { market } = useMarket();
   const { asks, bids, spread, loading, error } = useOrderBook();
+  const sym = market.baseSymbol;
+  const dec = market.baseDecimals;
 
   if (loading) {
     return (
       <div className="flex flex-col gap-0">
         <div className="grid grid-cols-3 gap-2 border-b px-3 py-2 font-medium text-muted-foreground text-xs">
           <span>Rate</span>
-          <span className="text-right">Amount (SUI)</span>
+          <span className="text-right">Amount ({sym})</span>
           <span className="text-right">Total</span>
         </div>
         <div className="flex items-center justify-center py-12">
@@ -40,10 +40,9 @@ export function OrderBookDisplay() {
 
   return (
     <div className="flex flex-col gap-0">
-      {/* Header */}
       <div className="grid grid-cols-3 gap-2 border-b px-3 py-2 font-medium text-muted-foreground text-xs">
         <span>Rate</span>
-        <span className="text-right">Amount (SUI)</span>
+        <span className="text-right">Amount ({sym})</span>
         <span className="text-right">Total</span>
       </div>
 
@@ -55,7 +54,6 @@ export function OrderBookDisplay() {
         </div>
       ) : (
         <>
-          {/* Asks (Lend offers) — displayed in reverse so lowest rate is at bottom near spread */}
           <div className="flex flex-col-reverse">
             {asks.map((order) => {
               const cumulative = asks
@@ -70,17 +68,16 @@ export function OrderBookDisplay() {
                     {bpsToPercent(order.rate)}
                   </span>
                   <span className="text-right font-mono">
-                    {formatAmount(order.amount)}
+                    {formatTokenAmount(order.amount, dec)}
                   </span>
                   <span className="text-right font-mono text-muted-foreground">
-                    {formatAmount(cumulative)}
+                    {formatTokenAmount(cumulative, dec)}
                   </span>
                 </div>
               );
             })}
           </div>
 
-          {/* Spread indicator */}
           <div className="flex items-center justify-center gap-2 border-y bg-muted/30 py-2">
             <span className="font-medium text-muted-foreground text-xs">
               Spread
@@ -90,7 +87,6 @@ export function OrderBookDisplay() {
             </span>
           </div>
 
-          {/* Bids (Borrow requests) */}
           <div className="flex flex-col">
             {bids.map((order) => {
               const cumulative = bids
@@ -105,10 +101,10 @@ export function OrderBookDisplay() {
                     {bpsToPercent(order.rate)}
                   </span>
                   <span className="text-right font-mono">
-                    {formatAmount(order.amount)}
+                    {formatTokenAmount(order.amount, dec)}
                   </span>
                   <span className="text-right font-mono text-muted-foreground">
-                    {formatAmount(cumulative)}
+                    {formatTokenAmount(cumulative, dec)}
                   </span>
                 </div>
               );

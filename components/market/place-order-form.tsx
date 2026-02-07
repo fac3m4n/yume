@@ -4,18 +4,18 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useMarket } from "@/hooks/sui/use-market-context";
+import { useOrderBook } from "@/hooks/sui/use-market-data";
 import { useYumeTransactions } from "@/hooks/sui/use-yume-transactions";
 
 type OrderSide = "lend" | "borrow";
 
-/** Convert SUI amount (e.g. "0.1") to MIST (bigint) */
-function suiToMist(sui: string): bigint {
-  const num = Number.parseFloat(sui);
+function toSmallestUnit(amount: string, decimals: number): bigint {
+  const num = Number.parseFloat(amount);
   if (isNaN(num) || num <= 0) return BigInt(0);
-  return BigInt(Math.floor(num * 1e9));
+  return BigInt(Math.floor(num * 10 ** decimals));
 }
 
-/** Convert rate percentage (e.g. "5.00") to basis points (number) */
 function percentToBps(pct: string): number {
   const num = Number.parseFloat(pct);
   if (isNaN(num) || num <= 0) return 0;
@@ -23,6 +23,8 @@ function percentToBps(pct: string): number {
 }
 
 export function PlaceOrderForm() {
+  const { market } = useMarket();
+  const { refetch: refetchBook } = useOrderBook();
   const [side, setSide] = useState<OrderSide>("lend");
   const [amount, setAmount] = useState("");
   const [rate, setRate] = useState("");
@@ -32,29 +34,31 @@ export function PlaceOrderForm() {
     useYumeTransactions();
 
   const isLend = side === "lend";
-  const amountMist = suiToMist(amount);
+  const amountSmallest = toSmallestUnit(amount, market.baseDecimals);
   const rateBps = percentToBps(rate);
   const canSubmit =
-    isConnected && amountMist > 0 && rateBps > 0 && !txState.loading;
+    isConnected && amountSmallest > 0 && rateBps > 0 && !txState.loading;
+  const sym = market.baseSymbol;
 
   async function handleSubmit() {
     setSuccessDigest(null);
     let digest: string | null = null;
     if (isLend) {
-      digest = await placeLendOrder(amountMist, rateBps);
+      digest = await placeLendOrder(amountSmallest, rateBps);
     } else {
-      digest = await placeBorrowOrder(amountMist, rateBps);
+      digest = await placeBorrowOrder(amountSmallest, rateBps);
     }
     if (digest) {
       setSuccessDigest(digest);
       setAmount("");
       setRate("");
+      // Immediate refetch
+      setTimeout(() => refetchBook(), 2000);
     }
   }
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Side toggle */}
       <div className="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1">
         <button
           className={`rounded-md px-3 py-2 font-medium text-sm transition-colors ${
@@ -80,10 +84,9 @@ export function PlaceOrderForm() {
         </button>
       </div>
 
-      {/* Amount input */}
       <div className="flex flex-col gap-2">
         <Label className="text-sm" htmlFor="amount">
-          {isLend ? "Deposit Amount (SUI)" : "Borrow Amount (SUI)"}
+          {isLend ? `Deposit Amount (${sym})` : `Borrow Amount (${sym})`}
         </Label>
         <Input
           className="font-mono"
@@ -96,7 +99,6 @@ export function PlaceOrderForm() {
         />
       </div>
 
-      {/* Rate input */}
       <div className="flex flex-col gap-2">
         <Label className="text-sm" htmlFor="rate">
           {isLend ? "Interest Rate (%)" : "Max Rate (%)"}
@@ -112,14 +114,15 @@ export function PlaceOrderForm() {
         />
       </div>
 
-      {/* Summary */}
       {amount && rate && (
         <div className="space-y-1 rounded-lg bg-muted/50 p-3 text-sm">
           <div className="flex justify-between">
             <span className="text-muted-foreground">
               {isLend ? "You deposit" : "You receive"}
             </span>
-            <span className="font-medium font-mono">{amount} SUI</span>
+            <span className="font-medium font-mono">
+              {amount} {sym}
+            </span>
           </div>
           <div className="flex justify-between">
             <span className="text-muted-foreground">Interest rate</span>
@@ -129,37 +132,15 @@ export function PlaceOrderForm() {
             <span className="text-muted-foreground">Term</span>
             <span className="font-medium font-mono">7 Days</span>
           </div>
-          {isLend && (
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Expected return</span>
-              <span className="font-medium font-mono text-emerald-600">
-                {(
-                  Number(amount) +
-                  (Number(amount) * Number(rate)) / 100
-                ).toFixed(4)}{" "}
-                SUI
-              </span>
-            </div>
-          )}
-          {!isLend && (
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Collateral needed</span>
-              <span className="font-medium font-mono text-rose-500">
-                ~{((Number(amount) * 10_000) / 9000).toFixed(4)} SUI
-              </span>
-            </div>
-          )}
         </div>
       )}
 
-      {/* Error */}
       {txState.error && (
         <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-2 text-destructive text-xs">
           {txState.error}
         </div>
       )}
 
-      {/* Success */}
       {successDigest && (
         <div className="rounded-lg border border-emerald-500/50 bg-emerald-500/10 p-2 text-xs">
           <span className="text-emerald-600">Order placed!</span>{" "}
@@ -174,7 +155,6 @@ export function PlaceOrderForm() {
         </div>
       )}
 
-      {/* Submit */}
       <Button
         className={`w-full font-medium ${
           isLend

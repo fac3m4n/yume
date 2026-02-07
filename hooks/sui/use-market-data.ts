@@ -3,88 +3,68 @@
 /**
  * Yume Protocol — Market Data Hooks (Real On-Chain Queries)
  *
- * Fetches order book state by reconstructing from events,
- * user positions from owned objects, and pool/vault state
- * from shared objects.
- *
- * Uses SuiJsonRpcClient for event queries (not available on gRPC)
- * and the gRPC client via dapp-kit for object reads.
+ * All hooks accept a MarketConfig to support multi-market switching.
+ * Falls back to the market context if no explicit config is provided.
  */
 
 import { useCurrentAccount, useCurrentClient } from "@mysten/dapp-kit-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { LoanPosition, Order, PoolState } from "./types";
+import type { LoanPosition, MarketConfig, Order, PoolState } from "./types";
 import {
   bpsToPercent,
+  DURATION_LABELS,
   ORDER_SIDE_LEND,
-  ORDERBOOK_ID,
   PACKAGE_ID,
-  POOL_ID,
+  RISK_TIER_LABELS,
 } from "./types";
+import { useMarket } from "./use-market-context";
 
 // ============================================================
-// Client helper — we use the gRPC client from dapp-kit
+// Helpers
 // ============================================================
 
-/**
- * Format MIST values to SUI for display (1 SUI = 1e9 MIST)
- */
-export function mistToSui(mist: bigint | number | string): string {
-  const val = typeof mist === "bigint" ? mist : BigInt(mist);
-  const whole = val / BigInt(1e9);
-  const frac = val % BigInt(1e9);
-  const fracStr = frac.toString().padStart(9, "0").slice(0, 4);
+/** Format smallest-unit values for display based on decimals */
+export function formatTokenAmount(
+  raw: bigint | number | string,
+  decimals: number
+): string {
+  const val = typeof raw === "bigint" ? raw : BigInt(String(raw));
+  const divisor = BigInt(10 ** decimals);
+  const whole = val / divisor;
+  const frac = val % divisor;
+  const fracStr = frac.toString().padStart(decimals, "0").slice(0, 4);
   return `${whole}.${fracStr}`;
 }
 
+/** Legacy helper: format MIST to SUI */
+export function mistToSui(mist: bigint | number | string): string {
+  return formatTokenAmount(mist, 9);
+}
+
 // ============================================================
-// useOrderBook — Reconstruct from on-chain events
+// useOrderBook — Read orders from on-chain Table dynamic fields
 // ============================================================
 
-interface OrderPlacedEvent {
-  book_id: string;
-  order_id: string;
-  owner: string;
-  side: string;
-  amount: string;
-  rate: string;
-  timestamp: string;
-}
+export function useOrderBook(
+  explicitMarket?: MarketConfig,
+  refreshInterval = 15_000
+) {
+  const { market: ctxMarket } = useMarket();
+  const market = explicitMarket ?? ctxMarket;
 
-interface OrderCancelledEvent {
-  book_id: string;
-  order_id: string;
-  owner: string;
-}
-
-interface OrderMatchedEvent {
-  book_id: string;
-  lend_order_id: string;
-  borrow_order_id: string;
-  matched_amount: string;
-  rate: string;
-  lender: string;
-  borrower: string;
-}
-
-/**
- * Returns live order book data reconstructed from on-chain events.
- * Polls every `refreshInterval` ms (default 15s).
- */
-export function useOrderBook(refreshInterval = 15_000) {
   const client = useCurrentClient();
   const [asks, setAsks] = useState<Order[]>([]);
   const [bids, setBids] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const orderbookId = market.orderbookId;
+
   const fetchOrderBook = useCallback(async () => {
-    if (!(PACKAGE_ID && ORDERBOOK_ID && client)) return;
+    if (!(PACKAGE_ID && orderbookId && client)) return;
     try {
-      // We reconstruct the book from the OrderBook object's dynamic fields
-      // First read the OrderBook top-level to get next_order_id
       const bookObj = await client.getObject({
-        objectId: ORDERBOOK_ID,
+        objectId: orderbookId,
         include: { json: true },
       });
 
@@ -98,12 +78,7 @@ export function useOrderBook(refreshInterval = 15_000) {
         return;
       }
 
-      // Read orders via the Table's dynamic fields
-      // The orders Table is stored in the OrderBook's `orders` field
-      // We list dynamic fields on the table object ID
-      // The table ID is in the `orders` field of the OrderBook
       const tableId = bookJson?.orders as { id: string } | string | undefined;
-
       let ordersTableId: string | null = null;
       if (typeof tableId === "object" && tableId !== null && "id" in tableId) {
         ordersTableId = tableId.id;
@@ -111,13 +86,10 @@ export function useOrderBook(refreshInterval = 15_000) {
         ordersTableId = tableId;
       }
 
-      // Fallback: list dynamic fields directly on the book
-      // (Table entries are stored as dynamic fields on the Table UID)
-      const parentId = ordersTableId ?? ORDERBOOK_ID;
+      const parentId = ordersTableId ?? orderbookId;
 
       const newAsks: Order[] = [];
       const newBids: Order[] = [];
-
       let cursor: string | null = null;
       let hasMore = true;
 
@@ -128,28 +100,8 @@ export function useOrderBook(refreshInterval = 15_000) {
           cursor,
         });
 
-        // Read each dynamic field to get Order data
         for (const df of page.dynamicFields) {
           try {
-            const fieldData = await client.getDynamicField({
-              parentId,
-              name: df.name,
-            });
-
-            const value = fieldData.dynamicField?.value;
-            if (!value) continue;
-
-            // Parse the BCS or use the raw value
-            // The value.type should be the Order struct
-            // Try to read via JSON if available
-            const orderObj = value as unknown as {
-              bcs: Uint8Array;
-              type: string;
-            };
-
-            // For now, try reading the object with json include
-            // Dynamic field values may need BCS parsing
-            // Let's try reading the field object with json
             const fieldObj = await client.getObject({
               objectId: df.fieldId,
               include: { json: true },
@@ -161,7 +113,6 @@ export function useOrderBook(refreshInterval = 15_000) {
             > | null;
             if (!fieldJson) continue;
 
-            // Dynamic field JSON has { name, value } structure
             const orderData = fieldJson.value as Record<string, unknown> | null;
             if (!orderData) continue;
 
@@ -189,7 +140,6 @@ export function useOrderBook(refreshInterval = 15_000) {
         cursor = page.cursor;
       }
 
-      // Sort: asks by rate ascending, bids by rate descending
       newAsks.sort((a, b) => a.rate - b.rate);
       newBids.sort((a, b) => b.rate - a.rate);
 
@@ -204,9 +154,10 @@ export function useOrderBook(refreshInterval = 15_000) {
     } finally {
       setLoading(false);
     }
-  }, [client]);
+  }, [client, orderbookId]);
 
   useEffect(() => {
+    setLoading(true);
     fetchOrderBook();
     const interval = setInterval(fetchOrderBook, refreshInterval);
     return () => clearInterval(interval);
@@ -230,13 +181,29 @@ export function useOrderBook(refreshInterval = 15_000) {
 }
 
 // ============================================================
+// useUserOrders — Filter order book for connected wallet
+// ============================================================
+
+export function useUserOrders(explicitMarket?: MarketConfig) {
+  const account = useCurrentAccount();
+  const { asks, bids, loading, error, refetch } = useOrderBook(explicitMarket);
+
+  const userOrders = useMemo(() => {
+    if (!account?.address) return [];
+    return [...asks, ...bids].filter((o) => o.owner === account.address);
+  }, [asks, bids, account?.address]);
+
+  return { orders: userOrders, loading, error, refetch };
+}
+
+// ============================================================
 // usePositions — Query owned LoanPosition NFTs
 // ============================================================
 
-/**
- * Returns the current user's LoanPosition NFTs.
- */
-export function usePositions() {
+export function usePositions(explicitMarket?: MarketConfig) {
+  const { market: ctxMarket } = useMarket();
+  const market = explicitMarket ?? ctxMarket;
+
   const client = useCurrentClient();
   const account = useCurrentAccount();
   const [positions, setPositions] = useState<LoanPosition[]>([]);
@@ -264,6 +231,76 @@ export function usePositions() {
         const json = obj.json as Record<string, unknown> | null;
         if (!json) continue;
 
+        const pos: LoanPosition = {
+          id: obj.objectId,
+          loanId: String(json.loan_id ?? ""),
+          side: Number(json.side ?? 0),
+          lender: String(json.lender ?? ""),
+          borrower: String(json.borrower ?? ""),
+          principal: BigInt(String(json.principal ?? "0")),
+          rate: Number(json.rate ?? 0),
+          duration: Number(json.duration ?? 0),
+          collateralAmount: BigInt(String(json.collateral_amount ?? "0")),
+          startTime: Number(json.start_time ?? 0),
+          maturityTime: Number(json.maturity_time ?? 0),
+          status: Number(json.status ?? 0),
+          bookId: String(json.book_id ?? ""),
+        };
+
+        // Filter by current market's orderbook
+        if (pos.bookId === market.orderbookId || !market.orderbookId) {
+          parsed.push(pos);
+        }
+      }
+
+      setPositions(parsed);
+      setError(null);
+    } catch (err) {
+      console.error("Failed to fetch positions:", err);
+      setError(
+        err instanceof Error ? err.message : "Failed to fetch positions"
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [client, account?.address, market.orderbookId]);
+
+  useEffect(() => {
+    fetchPositions();
+  }, [fetchPositions]);
+
+  return { positions, loading, error, refetch: fetchPositions };
+}
+
+// ============================================================
+// useAllPositions — All positions across all markets
+// ============================================================
+
+export function useAllPositions() {
+  const client = useCurrentClient();
+  const account = useCurrentAccount();
+  const [positions, setPositions] = useState<LoanPosition[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchAll = useCallback(async () => {
+    if (!(client && account?.address && PACKAGE_ID)) {
+      setPositions([]);
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const positionType = `${PACKAGE_ID}::position::LoanPosition`;
+      const result = await client.listOwnedObjects({
+        owner: account.address,
+        type: positionType,
+        include: { json: true },
+      });
+
+      const parsed: LoanPosition[] = [];
+      for (const obj of result.objects) {
+        const json = obj.json as Record<string, unknown> | null;
+        if (!json) continue;
         parsed.push({
           id: obj.objectId,
           loanId: String(json.loan_id ?? ""),
@@ -282,46 +319,45 @@ export function usePositions() {
       }
 
       setPositions(parsed);
-      setError(null);
     } catch (err) {
-      console.error("Failed to fetch positions:", err);
-      setError(
-        err instanceof Error ? err.message : "Failed to fetch positions"
-      );
+      console.error("Failed to fetch all positions:", err);
     } finally {
       setLoading(false);
     }
   }, [client, account?.address]);
 
   useEffect(() => {
-    fetchPositions();
-  }, [fetchPositions]);
+    fetchAll();
+  }, [fetchAll]);
 
-  return { positions, loading, error, refetch: fetchPositions };
+  return { positions, loading, refetch: fetchAll };
 }
 
 // ============================================================
 // usePoolState — Read LiquidityPool shared object
 // ============================================================
 
-/**
- * Returns the current state of the Hybrid Liquidity Pool.
- */
-export function usePoolState() {
+export function usePoolState(explicitMarket?: MarketConfig) {
+  const { market: ctxMarket } = useMarket();
+  const market = explicitMarket ?? ctxMarket;
+
   const client = useCurrentClient();
   const [pool, setPool] = useState<PoolState | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const poolId = market.poolId;
+
   const fetchPool = useCallback(async () => {
-    if (!(client && POOL_ID)) {
+    if (!(client && poolId)) {
+      setPool(null);
       setLoading(false);
       return;
     }
 
     try {
       const result = await client.getObject({
-        objectId: POOL_ID,
+        objectId: poolId,
         include: { json: true },
       });
 
@@ -331,14 +367,9 @@ export function usePoolState() {
         return;
       }
 
-      // Read the available balance from the dynamic field
-      // The BalanceKey{} maps to a Balance<BASE> stored as dynamic field
       let availableBalance = BigInt(0);
       try {
-        const dfList = await client.listDynamicFields({
-          parentId: POOL_ID,
-        });
-        // Look for the balance key dynamic field
+        const dfList = await client.listDynamicFields({ parentId: poolId });
         for (const df of dfList.dynamicFields) {
           if (
             df.type.includes("BalanceKey") ||
@@ -353,7 +384,6 @@ export function usePoolState() {
               unknown
             > | null;
             if (fieldJson?.value !== undefined) {
-              // Balance<SUI> value is stored as a number or { value: ... }
               const val = fieldJson.value;
               if (typeof val === "object" && val !== null && "value" in val) {
                 availableBalance = BigInt(
@@ -366,11 +396,11 @@ export function usePoolState() {
           }
         }
       } catch {
-        // Fallback: available balance unknown
+        /* fallback */
       }
 
       setPool({
-        id: POOL_ID,
+        id: poolId,
         admin: String(json.admin ?? ""),
         bookId: String(json.book_id ?? ""),
         totalShares: BigInt(String(json.total_shares ?? "0")),
@@ -388,7 +418,7 @@ export function usePoolState() {
     } finally {
       setLoading(false);
     }
-  }, [client]);
+  }, [client, poolId]);
 
   useEffect(() => {
     fetchPool();
@@ -398,13 +428,11 @@ export function usePoolState() {
 }
 
 // ============================================================
-// useMarketStats — Computed from live order book + pool data
+// useMarketStats — Computed from live data + current market
 // ============================================================
 
-/**
- * Returns market-level statistics computed from real data.
- */
 export function useMarketStats() {
+  const { market } = useMarket();
   const {
     asks,
     bids,
@@ -423,20 +451,26 @@ export function useMarketStats() {
       totalBidVolume +
       (pool?.availableBalance ?? BigInt(0)) +
       (pool?.deployedBalance ?? BigInt(0));
-    return `${mistToSui(total)} SUI`;
-  }, [totalAskVolume, totalBidVolume, pool]);
+    return `${formatTokenAmount(total, market.baseDecimals)} ${market.baseSymbol}`;
+  }, [
+    totalAskVolume,
+    totalBidVolume,
+    pool,
+    market.baseDecimals,
+    market.baseSymbol,
+  ]);
 
   return {
     tvl,
     activeOrders: asks.length + bids.length,
-    activeLoans: 0, // Will be computed from positions count
+    activeLoans: 0,
     bestAskRate: asks.length > 0 ? bpsToPercent(asks[0].rate) : "—",
     bestBidRate: bids.length > 0 ? bpsToPercent(bids[0].rate) : "—",
     spread: spread > 0 ? bpsToPercent(spread) : "—",
-    market: "SUI / SUI",
-    duration: "7 Day",
-    riskTier: "Tier A",
-    maxLtv: "90%",
+    market: market.label,
+    duration: DURATION_LABELS[market.duration] ?? `${market.duration}s`,
+    riskTier: RISK_TIER_LABELS[market.riskTier] ?? "Unknown",
+    maxLtv: `${(market.maxLtvBps / 100).toFixed(0)}%`,
     loading,
   };
 }

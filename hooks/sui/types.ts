@@ -15,13 +15,30 @@ export const PACKAGE_ID = process.env.NEXT_PUBLIC_YUME_PACKAGE_ID ?? "";
 /** Sui shared Clock object ID */
 export const SUI_CLOCK_ID = "0x6";
 
-/** Deployed shared object IDs (set after mainnet deployment) */
+/** Legacy single-market IDs (kept for backward compat) */
 export const ORDERBOOK_ID = process.env.NEXT_PUBLIC_ORDERBOOK_ID ?? "";
 export const VAULT_ID = process.env.NEXT_PUBLIC_VAULT_ID ?? "";
 export const POOL_ID = process.env.NEXT_PUBLIC_POOL_ID ?? "";
 
-/** Fully-qualified SUI coin type */
+/** Fully-qualified coin type constants */
 export const SUI_TYPE = "0x2::sui::SUI";
+export const USDC_TYPE =
+  "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC";
+export const DEEP_TYPE =
+  "0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::deep::DEEP";
+
+// ============================================================
+// Type Argument Helpers
+// ============================================================
+
+/** Fully-qualified Move type for a coin (e.g., "0x2::sui::SUI") */
+export type CoinType = string;
+
+/** Type arguments for a specific lending market */
+export interface MarketTypeArgs {
+  base: CoinType;
+  collateral: CoinType;
+}
 
 // ============================================================
 // Order Constants
@@ -100,6 +117,82 @@ export function calculateInterest(principal: bigint, rateBps: number): bigint {
 }
 
 // ============================================================
+// Multi-Market Configuration
+// ============================================================
+
+/** Configuration for a single lending market */
+export interface MarketConfig {
+  id: string;
+  label: string;
+  base: CoinType;
+  collateral: CoinType;
+  baseSymbol: string;
+  collateralSymbol: string;
+  baseDecimals: number;
+  orderbookId: string;
+  vaultId: string;
+  poolId?: string;
+  duration: number;
+  riskTier: number;
+  maxLtvBps: number;
+}
+
+/** All deployed markets */
+export const MARKETS: MarketConfig[] = [
+  {
+    id: "sui-sui-7d",
+    label: "SUI / SUI",
+    base: SUI_TYPE,
+    collateral: SUI_TYPE,
+    baseSymbol: "SUI",
+    collateralSymbol: "SUI",
+    baseDecimals: 9,
+    orderbookId: process.env.NEXT_PUBLIC_ORDERBOOK_ID ?? "",
+    vaultId: process.env.NEXT_PUBLIC_VAULT_ID ?? "",
+    poolId: process.env.NEXT_PUBLIC_POOL_ID ?? "",
+    duration: DURATION_7_DAY,
+    riskTier: RISK_TIER_A,
+    maxLtvBps: 9000,
+  },
+  {
+    id: "usdc-sui-7d",
+    label: "USDC / SUI",
+    base: USDC_TYPE,
+    collateral: SUI_TYPE,
+    baseSymbol: "USDC",
+    collateralSymbol: "SUI",
+    baseDecimals: 6,
+    orderbookId: process.env.NEXT_PUBLIC_MARKET_USDC_SUI_OB ?? "",
+    vaultId: process.env.NEXT_PUBLIC_MARKET_USDC_SUI_VAULT ?? "",
+    duration: DURATION_7_DAY,
+    riskTier: RISK_TIER_A,
+    maxLtvBps: 9000,
+  },
+  {
+    id: "deep-sui-7d",
+    label: "DEEP / SUI",
+    base: DEEP_TYPE,
+    collateral: SUI_TYPE,
+    baseSymbol: "DEEP",
+    collateralSymbol: "SUI",
+    baseDecimals: 6,
+    orderbookId: process.env.NEXT_PUBLIC_MARKET_DEEP_SUI_OB ?? "",
+    vaultId: process.env.NEXT_PUBLIC_MARKET_DEEP_SUI_VAULT ?? "",
+    duration: DURATION_7_DAY,
+    riskTier: RISK_TIER_A,
+    maxLtvBps: 9000,
+  },
+];
+
+/** Get market by ID */
+export function getMarket(id: string): MarketConfig | undefined {
+  return MARKETS.find((m) => m.id === id);
+}
+
+/** Default market */
+export const DEFAULT_MARKET = MARKETS[0];
+
+// ============================================================
 // On-Chain Object Interfaces
 // ============================================================
 
@@ -161,17 +254,4 @@ export interface PoolState {
   maxRate: number;
   numBuckets: number;
   isActive: boolean;
-}
-
-// ============================================================
-// Type Argument Helpers
-// ============================================================
-
-/** Fully-qualified Move type for a coin (e.g., "0x2::sui::SUI") */
-export type CoinType = string;
-
-/** Type arguments for a specific lending market */
-export interface MarketTypeArgs {
-  base: CoinType;
-  collateral: CoinType;
 }
