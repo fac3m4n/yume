@@ -1,13 +1,7 @@
-// Copyright (c) Mysten Labs, Inc.
-// SPDX-License-Identifier: Apache-2.0
+"use client";
 
-import { ConnectButton, DAppKitProvider } from "@mysten/dapp-kit-react";
-import { dAppKit } from "./dapp-kit";
+import { ConnectButton } from "@mysten/dapp-kit-react";
 
 export default function ClientOnlyConnectButton() {
-  return (
-    <DAppKitProvider dAppKit={dAppKit}>
-      <ConnectButton />
-    </DAppKitProvider>
-  );
+  return <ConnectButton />;
 }
