@@ -47,7 +47,7 @@ export default function Home() {
       <div className="relative z-20 flex h-full flex-col justify-between p-6 md:p-12 lg:p-16">
         {/* Top Bar: Logo + Connect */}
         <header className="flex items-center justify-between">
-          <h1 className="font-serif text-2xl text-gray-900 italic tracking-tight">
+          <h1 className="font-serif text-4xl text-gray-900 italic tracking-tight">
             yume
           </h1>
           <ConnectButton />
