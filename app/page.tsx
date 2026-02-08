@@ -97,7 +97,7 @@ export default function Home() {
 
       {/* Bottom-right subtle tag */}
       <div className="absolute right-6 bottom-6 z-20 md:right-12 md:bottom-12">
-        <p className="text-[11px] text-gray-300 tracking-wide">
+        <p className="text-[11px] text-gray-900 tracking-wide">
           Live on Sui Mainnet
         </p>
       </div>
